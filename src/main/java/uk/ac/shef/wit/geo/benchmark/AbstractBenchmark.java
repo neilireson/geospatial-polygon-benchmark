@@ -32,21 +32,29 @@ import static java.lang.Math.*;
 public abstract class AbstractBenchmark {
 
     static final GeometryFactory gf = new GeometryFactory();
+    static final String outputDirectoryName = "out";
     private final Random random = new Random();
 
     //        @Param({"10000", "100000"})
-    int numberOfIndexPolygons = 100000;
+    int numberOfIndexPolygons = 1000000;
 
-    int numberOfQueryPoints = 1000;
+    int numberOfQueryPoints = 10000;
 
     //    @Param({"1000", "10000", "100000"})
     int queryRadiusMetres = 1000;
 
-    // roughly the UK
-    int minLat = 52;
-    int maxLat = 53;
-    int minLon = -1;
-    int maxLon = 1;
+    // roughly the bounding box for England
+    int minLat = 50;
+    int maxLat = 56;
+    int minLon = -2;
+    int maxLon = 2;
+
+    // random polygon parameters
+    int minVertices = 5;
+    int maxVertices = 12;
+    double averageRadius = 400;
+    double irregularity = 0.9;
+    double spikyness = 0.5;
 
     final List<Long> candidateCounts = new ArrayList<>();
     final List<Long> nearestCounts = new ArrayList<>();
@@ -65,9 +73,9 @@ public abstract class AbstractBenchmark {
     }
 
     private List<double[]> getPoints(String prefix, int numberOfPoints) {
-        createDirectory("out");
+        createDirectory(outputDirectoryName);
         String filename = prefix + "-" + numberOfPoints + ".csv";
-        Path path = Paths.get("out", filename);
+        Path path = Paths.get(outputDirectoryName, filename);
         List<double[]> indexPoints = new ArrayList<>();
         if (Files.exists(path)) {
             try (BufferedReader reader = new BufferedReader(new FileReader(path.toFile()))) {
@@ -100,9 +108,9 @@ public abstract class AbstractBenchmark {
     }
 
     private List<double[][]> getPolygons(String prefix, int numberOfPolygons) {
-        createDirectory("out");
+        createDirectory(outputDirectoryName);
         String filename = prefix + "-" + numberOfPolygons + ".csv";
-        Path path = Paths.get("out", filename);
+        Path path = Paths.get(outputDirectoryName, filename);
         List<double[][]> indexPolygons = new ArrayList<>();
         if (Files.exists(path)) {
             try (BufferedReader reader = new BufferedReader(new FileReader(path.toFile()))) {
@@ -142,7 +150,7 @@ public abstract class AbstractBenchmark {
         return indexPolygons;
     }
 
-    private void createDirectory(String directoryPath) {
+    void createDirectory(String directoryPath) {
         Path outputDirectory = Paths.get(directoryPath);
         if (!Files.exists(outputDirectory)) {
             if (!outputDirectory.toFile().mkdirs()) {
@@ -167,8 +175,7 @@ public abstract class AbstractBenchmark {
     }
 
     double[][] createPolygon(double lat, double lon) {
-//        return createPolygon(lat, lon, 4 + random.nextInt(8), 0.0005, 0.005);
-        return createPolygon(lat, lon, 5 + random.nextInt(7), 100, 0.9, 0.1);
+        return createPolygon(lat, lon, minVertices + random.nextInt(maxVertices - minVertices), averageRadius, irregularity, spikyness);
     }
 
     /**
@@ -206,16 +213,16 @@ public abstract class AbstractBenchmark {
      * and by varying the radial distance of each point from the centre.
      * Adapted from: https://stackoverflow.com/questions/8997099/algorithm-to-generate-random-2d-polygon
      *
-     * @param latitude     latitude of the "centre" of the polygon
-     * @param longitude    longitude of the "centre" of the polygon
-     * @param numVerts     number of vertices
-     * @param aveRadius    in px, the average radius of this polygon, this roughly controls how large the polygon is, really only useful for order of magnitude.
-     * @param irregularity [0,1] indicating how much variance there is in the angular spacing of vertices. [0,1] will map to [0, 2pi/numberOfVerts]
-     * @param spikeyness   [0,1] indicating how much variance there is in each vertex from the circle of radius aveRadius. [0,1] will map to [0, aveRadius]
+     * @param latitude      latitude of the "centre" of the polygon
+     * @param longitude     longitude of the "centre" of the polygon
+     * @param numVerts      number of vertices
+     * @param averageRadius in px, the average radius of this polygon, this roughly controls how large the polygon is, really only useful for order of magnitude.
+     * @param irregularity  [0,1] indicating how much variance there is in the angular spacing of vertices. [0,1] will map to [0, 2pi/numberOfVerts]
+     * @param spikeyness    [0,1] indicating how much variance there is in each vertex from the circle of radius averageRadius. [0,1] will map to [0, averageRadius]
      * @return a list of vertices forming a polygon.
      */
     public static double[][] createPolygon(double latitude, double longitude,
-                                           int numVerts, double aveRadius,
+                                           int numVerts, double averageRadius,
                                            double irregularity, double spikeyness) {
         double lat = toRadians(latitude);
         double lon = toRadians(longitude);
@@ -225,7 +232,7 @@ public abstract class AbstractBenchmark {
 
         Random random = new Random();
         irregularity = clip(irregularity, 0, 1) * 2 * PI / numVerts;
-        spikeyness = clip(spikeyness, 0, 1) * aveRadius;
+        spikeyness = clip(spikeyness, 0, 1) * averageRadius;
 
         // generate n angle steps
         double[] angleSteps = new double[numVerts];
@@ -249,7 +256,7 @@ public abstract class AbstractBenchmark {
         for (int i = 0; i < numVerts; i++) {
             angle += angleSteps[i];
             double d =
-                    clip(random.nextGaussian() * spikeyness + aveRadius, 0, 2 * aveRadius)
+                    clip(random.nextGaussian() * spikeyness + averageRadius, 0, 2 * averageRadius)
                             / latRadius;
             double vertLat = lat + (sin(angle) * d);
             double vertLon = lon + (cos(angle) * d);
@@ -278,7 +285,7 @@ public abstract class AbstractBenchmark {
         return (x < min) ? min : min(x, max);
     }
 
-    protected void teardown() {
+    protected void teardown() throws IOException {
         System.out.format("%n%s: average number of candidates per successful query = %.0f, " +
                         "number of intersecting polygons found = %.0f/%d%n",
                 getClass().getSimpleName(),
@@ -292,7 +299,7 @@ public abstract class AbstractBenchmark {
                 "-" + numberOfIndexPolygons +
                 "-" + queryRadiusMetres +
                 ".csv";
-        Path path = Paths.get("out", filename);
+        Path path = Paths.get(outputDirectoryName, filename);
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(path.toFile()))) {
             for (Map.Entry<Integer, Double> result : results) {
                 writer.write(String.valueOf(result.getKey()));
@@ -319,8 +326,9 @@ public abstract class AbstractBenchmark {
 //        benchmark.polygonIntersectsQuery();
 
         Options opt = new OptionsBuilder()
-                .include(GeotoolsBenchmark.class.getSimpleName())
+//                .include(GeotoolsBenchmark.class.getSimpleName())
                 .include(LuceneBenchmark.class.getSimpleName())
+//                .include(MongoDbBenchmark.class.getSimpleName())
                 .build();
 
         Collection<RunResult> runResults = new Runner(opt).run();

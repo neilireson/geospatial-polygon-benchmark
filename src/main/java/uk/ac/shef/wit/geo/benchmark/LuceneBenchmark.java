@@ -1,5 +1,6 @@
 package uk.ac.shef.wit.geo.benchmark;
 
+import me.tongfei.progressbar.ProgressBar;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.LatLonShape;
@@ -18,7 +19,7 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopScoreDocCollector;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.store.NIOFSDirectory;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -30,17 +31,23 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.AbstractMap;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
 
 @State(Scope.Thread)
 public class LuceneBenchmark
         extends AbstractBenchmark {
 
+    private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private final String fieldName = "location";
     private IndexSearcher indexSearcher = null;
 
@@ -50,40 +57,55 @@ public class LuceneBenchmark
 
         // MMapDirectory makes no difference to performance
 //            Path tempDirectory = Files.createTempDirectory(this.getClass().getName());
-//            final Directory directory = new MMapDirectory(tempDirectory);
-        final Directory directory = new RAMDirectory();
-        IndexWriterConfig iwConfig = new IndexWriterConfig();
-        IndexWriter indexWriter = new IndexWriter(directory, iwConfig);
+        //            try (Directory directory = new MMapDirectory(tempDirectory);
+        //            try (Directory directory = new RAMDirectory();
+//                 IndexWriter indexWriter = new IndexWriter(directory, new IndexWriterConfig())) {
 
-        int id = 0;
-        List<double[][]> polygons = getIndexPolygons();
-        for (double[][] latlons : polygons) {
-            try {
-                double[] lats = new double[latlons.length];
-                double[] lons = new double[latlons.length];
-                for (int i = 0; i < latlons.length; i++) {
-                    lats[i] = latlons[i][0];
-                    lons[i] = latlons[i][1];
-                }
-                Document doc = new Document();
-                doc.add(new StoredField("id", ++id));
-                Polygon polygon = new Polygon(lats, lons);
-                for (Field f : LatLonShape.createIndexableFields(fieldName, polygon)) {
-                    doc.add(f);
-                }
-                indexWriter.addDocument(doc);
-            } catch (Exception e) {
-                for (double[] latlon : latlons) {
-                    System.out.println(" " + latlon[1] + "," + latlon[0]);
-                }
-                System.out.println();
-                throw e;
-            }
+        createDirectory(outputDirectoryName);
+        Path indexPath = Paths.get(outputDirectoryName, "lucene-polygons-index" + numberOfIndexPolygons);
+        if (Files.exists(indexPath)) {
+            final IndexReader indexReader = DirectoryReader.open(NIOFSDirectory.open(indexPath));
+            indexSearcher = new IndexSearcher(indexReader);
+            return;
         }
-        indexWriter.commit();
-        indexWriter.close();
-        final IndexReader indexReader = DirectoryReader.open(directory);
-        indexSearcher = new IndexSearcher(indexReader);
+
+        try (Directory directory = NIOFSDirectory.open(indexPath);
+             IndexWriter indexWriter = new IndexWriter(directory, new IndexWriterConfig())) {
+
+            int id = 0;
+            List<double[][]> polygons = getIndexPolygons();
+            try (ProgressBar progressBar = new ProgressBar("Features:", numberOfIndexPolygons)) {
+                for (double[][] latlons : polygons) {
+                    try {
+                        double[] lats = new double[latlons.length];
+                        double[] lons = new double[latlons.length];
+                        for (int i = 0; i < latlons.length; i++) {
+                            lats[i] = latlons[i][0];
+                            lons[i] = latlons[i][1];
+                        }
+                        Document doc = new Document();
+                        doc.add(new StoredField("id", ++id));
+                        Polygon polygon = new Polygon(lats, lons);
+                        for (Field f : LatLonShape.createIndexableFields(fieldName, polygon)) {
+                            doc.add(f);
+                        }
+                        indexWriter.addDocument(doc);
+                    } catch (Exception e) {
+                        StringBuilder sb = new StringBuilder();
+                        for (double[] latlon : latlons) {
+                            sb.append(" ").append(latlon[1]).append(",").append(latlon[0]);
+                        }
+                        logger.error("Failed to add polygon:{}", sb, e);
+                        throw e;
+                    } finally {
+                        progressBar.step();
+                    }
+                }
+                indexWriter.commit();
+            }
+            final IndexReader indexReader = DirectoryReader.open(directory);
+            indexSearcher = new IndexSearcher(indexReader);
+        }
     }
 
     @Benchmark
@@ -93,22 +115,6 @@ public class LuceneBenchmark
     @Warmup(iterations = 0)
     @Measurement(iterations = 1)
     public void pointIntersectsQuery() {
-        pointQuery(latlon -> {
-            Query query = LatLonShape.newGeometryQuery(fieldName,
-                    ShapeField.QueryRelation.INTERSECTS, new Point(latlon[0], latlon[1]));
-
-            TopScoreDocCollector collector = TopScoreDocCollector.create(1000, 1000);
-            try {
-                indexSearcher.search(query, collector);
-                return collector.topDocs();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        });
-    }
-
-    public void pointQuery(Function<double[], TopDocs> getTopDocsFunction) {
-
         long candidateCount = 0;
         long nearestCount = 0;
         results.clear();
@@ -116,7 +122,12 @@ public class LuceneBenchmark
             int id = 0;
             float distance = -1;
             try {
-                TopDocs topDocs = getTopDocsFunction.apply(latlon);
+                Query query = LatLonShape.newGeometryQuery(fieldName,
+                        ShapeField.QueryRelation.INTERSECTS, new Point(latlon[0], latlon[1]));
+
+                TopScoreDocCollector collector = TopScoreDocCollector.create(1000, 1000);
+                indexSearcher.search(query, collector);
+                TopDocs topDocs = collector.topDocs();
 
                 candidateCount += topDocs.totalHits.value;
                 if (topDocs.totalHits.value != 0) {
@@ -147,21 +158,6 @@ public class LuceneBenchmark
     @Warmup(iterations = 0)
     @Measurement(iterations = 1)
     public void polygonIntersectsQuery() {
-        polygonQuery(polygon -> {
-            Query query = LatLonShape.newGeometryQuery(fieldName,
-                    ShapeField.QueryRelation.INTERSECTS, polygon);
-
-            TopScoreDocCollector collector = TopScoreDocCollector.create(1000, 1000);
-            try {
-                indexSearcher.search(query, collector);
-                return collector.topDocs();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        });
-    }
-
-    public void polygonQuery(Function<Polygon, TopDocs> getTopDocsFunction) {
 
         long candidateCount = 0;
         long nearestCount = 0;
@@ -177,7 +173,13 @@ public class LuceneBenchmark
                     lons[i] = latlons[i][1];
                 }
                 Polygon polygon = new Polygon(lats, lons);
-                TopDocs topDocs = getTopDocsFunction.apply(polygon);
+                Query query = LatLonShape.newGeometryQuery(fieldName,
+                        ShapeField.QueryRelation.INTERSECTS, polygon);
+
+                TopScoreDocCollector collector = TopScoreDocCollector.create(1000, 1000);
+                indexSearcher.search(query, collector);
+                TopDocs topDocs = collector.topDocs();
+
 
                 candidateCount += topDocs.totalHits.value;
                 if (topDocs.totalHits.value != 0) {
@@ -201,7 +203,18 @@ public class LuceneBenchmark
     }
 
     @TearDown
-    public void teardown() {
+    public void teardown()
+            throws IOException {
         super.teardown();
+        indexSearcher.getIndexReader().close();
+    }
+
+
+    public static void main(String[] args) throws IOException {
+        LuceneBenchmark benchmark = new LuceneBenchmark();
+        benchmark.setup();
+        benchmark.pointIntersectsQuery();
+        benchmark.polygonIntersectsQuery();
+        benchmark.teardown();
     }
 }

@@ -1,15 +1,31 @@
 package uk.ac.shef.wit.geo.benchmark;
 
+import me.tongfei.progressbar.ProgressBar;
 import org.geotools.data.DataUtilities;
+import org.geotools.data.DefaultTransaction;
+import org.geotools.data.FileDataStore;
+import org.geotools.data.FileDataStoreFinder;
+import org.geotools.data.Transaction;
+import org.geotools.data.collection.ListFeatureCollection;
 import org.geotools.data.collection.SpatialIndexFeatureCollection;
+import org.geotools.data.shapefile.ShapefileDataStore;
+import org.geotools.data.shapefile.ShapefileDataStoreFactory;
 import org.geotools.data.simple.SimpleFeatureCollection;
 import org.geotools.data.simple.SimpleFeatureIterator;
+import org.geotools.data.simple.SimpleFeatureSource;
+import org.geotools.data.simple.SimpleFeatureStore;
 import org.geotools.factory.CommonFactoryFinder;
 import org.geotools.feature.simple.SimpleFeatureBuilder;
 import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
 import org.geotools.geometry.jts.JTS;
+import org.geotools.map.FeatureLayer;
+import org.geotools.map.Layer;
+import org.geotools.map.MapContent;
 import org.geotools.referencing.GeodeticCalculator;
 import org.geotools.referencing.crs.DefaultGeographicCRS;
+import org.geotools.styling.SLD;
+import org.geotools.styling.Style;
+import org.geotools.swing.JMapFrame;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
@@ -34,9 +50,14 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.Serializable;
 import java.lang.invoke.MethodHandles;
 import java.util.AbstractMap;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -53,32 +74,85 @@ public class GeotoolsBenchmark
         polyTypeBuilder.setName("Polygon");
         polyTypeBuilder.setNamespaceURI("Polygon");
         polyTypeBuilder.setCRS(DefaultGeographicCRS.WGS84);
-        polyTypeBuilder.add("polyGeom", Polygon.class);
-        polyTypeBuilder.setDefaultGeometry("polyGeom");
+        // Note "the_geom" seems to be necessary name for shapefile read/write
+        polyTypeBuilder.add("the_geom", Polygon.class);
+        polyTypeBuilder.setDefaultGeometry("the_geom");
         polyTypeBuilder.add("id", Integer.class);
         SimpleFeatureType polygonFeature = polyTypeBuilder.buildFeatureType();
 
-        ArrayList<SimpleFeature> features = new ArrayList<>();
-        int id = 0;
-        for (double[][] latlons : getIndexPolygons()) {
-            Coordinate[] coords = new Coordinate[latlons.length];
-            for (int i = 0; i < coords.length; i++) {
-                coords[i] = new Coordinate(latlons[i][1], latlons[i][0]);
-            }
-            Polygon polygon = gf.createPolygon(coords);
-            SimpleFeature feature = createSimpleFeature(polygonFeature, polygon);
+        createDirectory(outputDirectoryName);
+        File shapefile = new File(outputDirectoryName, "benchmark-polygons-" + numberOfIndexPolygons + ".shp");
 
-            if (feature != null) {
-                feature.setAttribute("id", ++id);
-                features.add(feature);
-            } else {
-                logger.error("Not a valid feature");
+        final SimpleFeatureCollection featureCollection;
+        if (shapefile.exists()) {
+            logger.info("Reading features from shapefile: {}", shapefile);
+            try {
+                FileDataStore store = FileDataStoreFinder.getDataStore(shapefile);
+                SimpleFeatureSource featureSource = store.getFeatureSource();
+                SimpleFeatureCollection collection = featureSource.getFeatures();
+                int size = collection.size();
+                if (size != numberOfIndexPolygons) {
+                    throw new RuntimeException("Unexpected number of features in shapefile:" +
+                            shapefile + " expected=" + numberOfIndexPolygons + ", read=" + size);
+                }
+//                showFeatures(featureSource);
+
+                logger.info("Wrapping features in a collection");
+                featureCollection = DataUtilities.collection(featureSource.getFeatures());
+                store.dispose();
+
+                logger.info("Finished reading {} features from shapefile: {}", size, shapefile);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to read features from shapefile: " + shapefile, e);
+            }
+        } else {
+            logger.info("Creating {} features", numberOfIndexPolygons);
+
+            ArrayList<SimpleFeature> features = new ArrayList<>();
+            int id = 0;
+            try (ProgressBar progressBar = new ProgressBar("Features:", numberOfIndexPolygons)) {
+                for (double[][] latlons : getIndexPolygons()) {
+                    Coordinate[] coords = new Coordinate[latlons.length];
+                    for (int i = 0; i < coords.length; i++) {
+                        coords[i] = new Coordinate(latlons[i][1], latlons[i][0]);
+                    }
+                    Polygon polygon = gf.createPolygon(coords);
+                    SimpleFeature feature = createSimpleFeature(polygonFeature, polygon);
+
+                    if (feature != null) {
+                        feature.setAttribute("id", ++id);
+                        features.add(feature);
+                    } else {
+                        logger.error("Not a valid feature");
+                    }
+                    progressBar.step();
+                }
+            }
+
+            logger.info("Wrapping features in a collection");
+            featureCollection = DataUtilities.collection(features);
+            logger.info("Writing features to shapefile: {}", shapefile);
+            try {
+                writeToShapefile(shapefile, polygonFeature, features);
+            } catch (IOException e) {
+                logger.error("Failed to write shapefile", e);
             }
         }
-
-        SimpleFeatureCollection featureCollection = DataUtilities.collection(features);
         index = new SpatialIndexFeatureCollection(featureCollection.getSchema());
-        index.addAll(features);
+        index.addAll(featureCollection);
+    }
+
+    private void showFeatures(SimpleFeatureSource featureSource) {
+        // Create a map content and add our shapefile to it
+        MapContent map = new MapContent();
+        map.setTitle("Quickstart");
+
+        Style style = SLD.createSimpleStyle(featureSource.getSchema());
+        Layer layer = new FeatureLayer(featureSource, style);
+        map.addLayer(layer);
+
+        // Now display the map
+        JMapFrame.showMap(map);
     }
 
     @Benchmark
@@ -187,7 +261,7 @@ public class GeotoolsBenchmark
     }
 
     @TearDown
-    public void teardown() {
+    public void teardown() throws IOException {
         super.teardown();
     }
 
@@ -204,5 +278,75 @@ public class GeotoolsBenchmark
         SimpleFeatureType schema = index.getSchema();
         Filter filter = ff.intersects(ff.property(schema.getGeometryDescriptor().getName()), ff.literal(geometry));
         return index.subCollection(filter);
+    }
+
+    private void writeToShapefile(File shapefile, SimpleFeatureType type, ArrayList<SimpleFeature> features) throws IOException {
+        ShapefileDataStoreFactory dataStoreFactory = new ShapefileDataStoreFactory();
+
+        Map<String, Serializable> params = new HashMap<>();
+        params.put("url", shapefile.toURI().toURL());
+        params.put("create spatial index", Boolean.TRUE);
+
+        ShapefileDataStore newDataStore =
+                (ShapefileDataStore) dataStoreFactory.createNewDataStore(params);
+
+        /*
+         * TYPE is used as a template to describe the file contents
+         */
+        newDataStore.createSchema(type);
+
+        /*
+         * Write the features to the shapefile
+         */
+        Transaction transaction = new DefaultTransaction("create");
+
+        String[] typeNames = newDataStore.getTypeNames();
+        String typeName = typeNames[0];
+        SimpleFeatureSource featureSource = newDataStore.getFeatureSource(typeName);
+        SimpleFeatureType SHAPE_TYPE = featureSource.getSchema();
+        /*
+         * The Shapefile format has a couple limitations:
+         * - "the_geom" is always first, and used for the geometry attribute name
+         * - "the_geom" must be of type Point, MultiPoint, MuiltiLineString, MultiPolygon
+         * - Attribute names are limited in length
+         * - Not all data types are supported (example Timestamp represented as Date)
+         *
+         * Each data store has different limitations so check the resulting SimpleFeatureType.
+         */
+        logger.info("SHAPE:{}", SHAPE_TYPE);
+
+        if (featureSource instanceof SimpleFeatureStore) {
+            SimpleFeatureStore featureStore = (SimpleFeatureStore) featureSource;
+            /*
+             * SimpleFeatureStore has a method to add features from a
+             * SimpleFeatureCollection object, so we use the ListFeatureCollection
+             * class to wrap our list of features.
+             */
+            SimpleFeatureCollection collection = new ListFeatureCollection(type, features);
+            featureStore.setTransaction(transaction);
+            try {
+                featureStore.addFeatures(collection);
+                transaction.commit();
+            } catch (Exception problem) {
+                problem.printStackTrace();
+                transaction.rollback();
+            } finally {
+                transaction.close();
+            }
+        } else {
+            logger.error("{} does not support read/write access", typeName);
+        }
+    }
+
+    public static void main(String[] args) throws IOException {
+        GeotoolsBenchmark benchmark = new GeotoolsBenchmark();
+        benchmark.setup();
+        try {
+            benchmark.pointIntersectsQuery();
+            benchmark.polygonIntersectsQuery();
+        } catch (TransformException e) {
+            throw new IOException(e);
+        }
+        benchmark.teardown();
     }
 }
