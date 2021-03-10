@@ -106,7 +106,7 @@ public class MongoDbBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 5)
     public void polygonQuery() {
         MongoDatabase db = mongoClient.getDatabase(placesDbName);
         MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);

@@ -160,7 +160,7 @@ public class GeotoolsBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 5)
     public void pointIntersectsQuery() throws TransformException {
 
         GeodeticCalculator gc = new GeodeticCalculator(DefaultGeographicCRS.WGS84);
@@ -210,7 +210,7 @@ public class GeotoolsBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 5)
     public void polygonIntersectsQuery() throws TransformException {
 
         GeodeticCalculator gc = new GeodeticCalculator(DefaultGeographicCRS.WGS84);

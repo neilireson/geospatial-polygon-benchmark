@@ -113,7 +113,7 @@ public class LuceneBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 5)
     public void pointIntersectsQuery() {
         long candidateCount = 0;
         long nearestCount = 0;
@@ -156,7 +156,7 @@ public class LuceneBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 5)
     public void polygonIntersectsQuery() {
 
         long candidateCount = 0;

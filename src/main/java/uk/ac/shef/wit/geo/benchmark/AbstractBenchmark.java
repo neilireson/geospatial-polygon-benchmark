@@ -315,9 +315,11 @@ public abstract class AbstractBenchmark {
 //        benchmark.polygonIntersectsQuery();
 
         Options opt = new OptionsBuilder()
-//                .include(GeotoolsBenchmark.class.getSimpleName())
+//                .addProfiler(GCProfiler.class)
+                .addProfiler(MaxMemoryProfiler.class)
+                .include(GeotoolsBenchmark.class.getSimpleName())
                 .include(LuceneBenchmark.class.getSimpleName())
-//                .include(MongoDbBenchmark.class.getSimpleName())
+                .include(MongoDbBenchmark.class.getSimpleName())
                 .build();
 
         Collection<RunResult> runResults = new Runner(opt).run();
