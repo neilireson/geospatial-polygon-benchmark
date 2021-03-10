@@ -266,10 +266,16 @@ public class GeotoolsBenchmark
     }
 
     public static SimpleFeature createSimpleFeature(SimpleFeatureType schema, Geometry geometry) {
-        if (geometry != null && geometry.isValid()) {
-            SimpleFeatureBuilder featureBuilder = new SimpleFeatureBuilder(schema);
-            featureBuilder.add(geometry);
-            return featureBuilder.buildFeature(null);
+        if (geometry != null) {
+            if (geometry.isValid()) {
+                SimpleFeatureBuilder featureBuilder = new SimpleFeatureBuilder(schema);
+                featureBuilder.add(geometry);
+                return featureBuilder.buildFeature(null);
+            } else {
+                logger.error("Feature geometry is not valid: " + geometry);
+                DrawShapes.draw(geometry);
+                throw new IllegalArgumentException("Feature geometry is not valid");
+            }
         }
         return null;
     }
@@ -327,8 +333,8 @@ public class GeotoolsBenchmark
             try {
                 featureStore.addFeatures(collection);
                 transaction.commit();
-            } catch (Exception problem) {
-                problem.printStackTrace();
+            } catch (Exception e) {
+                logger.error("Failed to add features to shapefile", e);
                 transaction.rollback();
             } finally {
                 transaction.close();

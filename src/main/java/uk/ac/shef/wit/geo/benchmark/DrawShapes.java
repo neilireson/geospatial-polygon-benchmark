@@ -1,10 +1,18 @@
 package uk.ac.shef.wit.geo.benchmark;
 
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.Point;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.geom.Path2D;
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,18 +22,42 @@ import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 
-public class DrawPolygons extends JPanel {
+public class DrawShapes extends JPanel {
 
+    private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private final Map<Color, List<Path2D.Double>> polygonList = new HashMap<>();
-    private final double minX;
-    private final double minY;
-    private final double rangeX;
-    private final double rangeY;
+    private double minX;
+    private double minY;
+    private double rangeX;
+    private double rangeY;
 
     private final int width = 600;
     private final int height = 600;
 
-    public DrawPolygons(double minX, double maxX, double minY, double maxY) {
+    public DrawShapes(double minX, double maxX, double minY, double maxY) {
+        init(minX, maxX, minY, maxY);
+    }
+
+    private DrawShapes(Geometry geometry) {
+        Geometry envelope = geometry.getEnvelope();
+        if (geometry instanceof Point || geometry instanceof LineString) {
+            logger.error("Geometry in not a 2d object");
+            return;
+        }
+        Coordinate[] boundary = envelope.getCoordinates();
+        double minX = boundary[0].x;
+        double minY = boundary[0].y;
+        double maxX = boundary[2].x;
+        double maxY = boundary[2].y;
+        init(minX, maxX, minY, maxY);
+        addGeometry(geometry);
+    }
+
+    public static void draw(Geometry geometry) {
+        new DrawShapes(geometry);
+    }
+
+    private void init(double minX, double maxX, double minY, double maxY) {
         this.minX = minX;
         this.minY = minY;
         rangeX = maxX - minX;
@@ -41,7 +73,7 @@ public class DrawPolygons extends JPanel {
 
     public void addPolygons(List<double[][]> polygonLatlons, Color color) {
         List<Path2D.Double> polygons = polygonList.computeIfAbsent(color, list -> new ArrayList<>());
-        System.out.println("initialising polygons: " + polygonLatlons.size());
+        logger.info("initialising polygons: {}", polygonLatlons.size());
 
         for (double[][] latlons : polygonLatlons) {
             Path2D.Double polygon = new Path2D.Double();
@@ -56,6 +88,30 @@ public class DrawPolygons extends JPanel {
             polygon.closePath();
             polygons.add(polygon);
         }
+    }
+
+    public void addGeometry(Geometry geometry) {
+        if (geometry.getNumGeometries() > 1) {
+            for (int i = 0; i < geometry.getNumGeometries(); i++) {
+                addGeometry(geometry.getGeometryN(i));
+            }
+            return;
+        }
+        Color color = Color.BLACK;
+        List<Path2D.Double> paths = polygonList.computeIfAbsent(color, list -> new ArrayList<>());
+
+        Path2D.Double path = new Path2D.Double();
+        Coordinate[] coordinates = geometry.getCoordinates();
+        for (int i = 0; i < coordinates.length; i++) {
+            double x = width * (coordinates[i].x - minX) / rangeX;
+            double y = height * (coordinates[i].y - minY) / rangeY;
+            if (i == 0)
+                path.moveTo(x, y);
+            else
+                path.lineTo(x, y);
+        }
+        path.closePath();
+        paths.add(path);
     }
 
     @Override
