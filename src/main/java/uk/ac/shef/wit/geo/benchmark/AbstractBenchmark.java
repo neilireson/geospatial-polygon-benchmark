@@ -19,7 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -33,10 +32,10 @@ public abstract class AbstractBenchmark {
 
     static final GeometryFactory gf = new GeometryFactory();
     static final String outputDirectoryName = "out";
-    private final Random random = new Random();
+    private static final Random random = new Random();
 
     //        @Param({"10000", "100000"})
-    int numberOfIndexPolygons = 1000000;
+    int numberOfIndexPolygons = 1234;
 
     int numberOfQueryPoints = 10000;
 
@@ -52,9 +51,18 @@ public abstract class AbstractBenchmark {
     // random polygon parameters
     int minVertices = 5;
     int maxVertices = 12;
-    double averageRadius = 400;
-    double irregularity = 0.9;
-    double spikyness = 0.5;
+    // the beta distribution determines the likelihood of polygon radius
+    // 1,1 is uniform; 1,2 linear decrease; 2,1 linear increase; 5,5 approx normal pdf;
+    // 8,2
+//    AbstractRealDistribution radiusBetaPDF = new BetaDistribution(1.0, 1.0);
+    float irregularity = 1f;
+    float spikiness = 1f;
+    // increasing lambda increases the likelihood of polygons with a minRadius
+    // -log(1 - (1 - exp(-lambda)) * U) / lambda;
+    // basically the exponential distribution (-log(1-U)/2) bounded [0,1]
+    double lambda = 10;
+    float minRadius = 400;
+    float maxRadius = 4000;
 
     final List<Long> candidateCounts = new ArrayList<>();
     final List<Long> nearestCounts = new ArrayList<>();
@@ -175,36 +183,10 @@ public abstract class AbstractBenchmark {
     }
 
     double[][] createPolygon(double lat, double lon) {
-        return createPolygon(lat, lon, minVertices + random.nextInt(maxVertices - minVertices), averageRadius, irregularity, spikyness);
+        return createPolygon((float) lat, (float) lon,
+                minVertices + random.nextInt(maxVertices - minVertices),
+                irregularity, spikiness, minRadius, maxRadius, lambda);
     }
-
-    /**
-     * @param lat           The centre latitude of the polygon
-     * @param lon           The centre longitude of the polygon
-     * @param numberOfNodes Number of vertices
-     * @param minRadius     Minimum radius degrees
-     * @param maxRadius     Maximum radius degrees
-     * @return polygon
-     */
-    double[][] createPolygon(double lat, double lon, int numberOfNodes, double minRadius, double maxRadius) {
-        double[] angles = new double[numberOfNodes];
-        for (int i = 0; i < numberOfNodes; i++) {
-            angles[i] = random.nextDouble() * Math.PI * 2;
-        }
-        Arrays.sort(angles);
-
-        double[][] latlons = new double[numberOfNodes + 1][];
-        for (int i = 0; i < numberOfNodes; i++) {
-            double radius = minRadius + random.nextDouble() * (maxRadius - minRadius);
-            double coordLat = Math.toRadians(lat) + (Math.sin(angles[i]) * radius);
-            double coordLon = Math.toRadians(lon) + (Math.cos(angles[i]) * radius);
-            latlons[i] = new double[]{Math.toDegrees(coordLat), Math.toDegrees(coordLon)};
-        }
-        // close the ring
-        latlons[numberOfNodes] = latlons[0];
-        return latlons;
-    }
-
 
     /**
      * Start with the centre of the polygon at lon, lat,
@@ -213,56 +195,65 @@ public abstract class AbstractBenchmark {
      * and by varying the radial distance of each point from the centre.
      * Adapted from: https://stackoverflow.com/questions/8997099/algorithm-to-generate-random-2d-polygon
      *
-     * @param latitude      latitude of the "centre" of the polygon
-     * @param longitude     longitude of the "centre" of the polygon
-     * @param numVerts      number of vertices
-     * @param averageRadius in px, the average radius of this polygon, this roughly controls how large the polygon is, really only useful for order of magnitude.
-     * @param irregularity  [0,1] indicating how much variance there is in the angular spacing of vertices. [0,1] will map to [0, 2pi/numberOfVerts]
-     * @param spikeyness    [0,1] indicating how much variance there is in each vertex from the circle of radius averageRadius. [0,1] will map to [0, averageRadius]
-     * @return a list of vertices forming a polygon.
+     * @param latitude     latitude of the "centre" of the polygon
+     * @param longitude    longitude of the "centre" of the polygon
+     * @param numVertices  number of vertices
+     * @param irregularity [0,1] indicating how much variance there is in the angular spacing of vertices. [0,1] will map to [0, 2pi/numberOfVerts]
+     * @param spikiness    [0,1] indicating how much variance there is in each vertex from the circle of radius averageRadius. [0,1] will map to [0, averageRadius]
+     * @param minRadius    the minimum radius of this polygon, in metres
+     * @param maxRadius    the maximum radius of this polygon, in metres
+     * @param lambda       parameter used in bounded exponential function to determine polygon radius
+     * @return an array of vertices forming a polygon.
      */
-    public static double[][] createPolygon(double latitude, double longitude,
-                                           int numVerts, double averageRadius,
-                                           double irregularity, double spikeyness) {
+    public static double[][] createPolygon(float latitude, float longitude,
+                                           int numVertices,
+                                           float irregularity, float spikiness,
+                                           float minRadius, float maxRadius, double lambda) {
+
+        double radiusExp = -log(1 - (1 - exp(-lambda)) * random.nextDouble()) / lambda;
+        float averageRadius = (float) (minRadius + (radiusExp * (maxRadius - minRadius)));
+
+        if (minRadius <= 0) {
+            throw new RuntimeException("Cannot create random polygons if the average radius is zero");
+        }
+
         double lat = toRadians(latitude);
         double lon = toRadians(longitude);
 
         // Radius of Earth at given latitude
         double latRadius = WGS84EarthRadius(lat);
 
-        Random random = new Random();
-        irregularity = clip(irregularity, 0, 1) * 2 * PI / numVerts;
-        spikeyness = clip(spikeyness, 0, 1) * averageRadius;
+        irregularity = (float) (clip(irregularity, 0, 1) * 2 * PI / numVertices);
+        spikiness = (float) (clip(spikiness, 0, 1) * averageRadius);
 
         // generate n angle steps
-        double[] angleSteps = new double[numVerts];
-        double lower = (2 * PI / numVerts) - irregularity;
-        double upper = (2 * PI / numVerts) + irregularity;
+        double[] angleSteps = new double[numVertices];
         double sum = 0;
-        for (int i = 0; i < numVerts; i++) {
-            double tmp = lower + ((upper - lower) * random.nextDouble());
-            angleSteps[i] = tmp;
-            sum = sum + tmp;
+        for (int i = 0; i < numVertices; i++) {
+            angleSteps[i] = 1 + (random.nextDouble() * irregularity);
+            sum += angleSteps[i];
         }
 
         // normalize the steps so that point 0 and point n+1 are the same
-        double k = sum / (2 * PI);
-        for (int i = 0; i < numVerts; i++) {
-            angleSteps[i] = angleSteps[i] / k;
+        double sumRadians = sum / (2 * PI);
+        for (int i = 0; i < numVertices; i++) {
+            angleSteps[i] = angleSteps[i] / sumRadians;
         }
         // now generate the points
-        double[][] points = new double[numVerts + 1][];
+        double[][] points = new double[numVertices + 1][];
         double angle = 0;
-        for (int i = 0; i < numVerts; i++) {
+        for (int i = 0; i < numVertices; i++) {
             angle += angleSteps[i];
-            double d =
-                    clip(random.nextGaussian() * spikeyness + averageRadius, 0, 2 * averageRadius)
-                            / latRadius;
-            double vertLat = lat + (sin(angle) * d);
-            double vertLon = lon + (cos(angle) * d);
-            points[i] = new double[]{toDegrees(vertLat), toDegrees(vertLon)};
+            float vertLat, vertLon;
+            do {
+                float d = (float) (clip(random.nextGaussian() * spikiness + averageRadius, 0, 2 * averageRadius)
+                        / latRadius);
+                vertLat = (float) toDegrees(lat + (sin(angle) * d));
+                vertLon = (float) toDegrees(lon + (cos(angle) * d));
+            } while (latitude == vertLat && longitude == vertLon);
+            points[i] = new double[]{vertLat, vertLon};
         }
-        points[numVerts] = points[0];
+        points[numVertices] = points[0];
 
         return points;
     }
@@ -312,9 +303,7 @@ public abstract class AbstractBenchmark {
         }
     }
 
-
     public static void main(String[] args) throws RunnerException, IOException {
-
 //        LuceneBenchmark benchmark = new LuceneBenchmark();
 //        DrawPolygons drawPolygons = new DrawPolygons(benchmark.minLon, benchmark.maxLon, benchmark.minLat, benchmark.maxLat);
 //        List<double[][]> indexPolygons = benchmark.getIndexPolygons();
