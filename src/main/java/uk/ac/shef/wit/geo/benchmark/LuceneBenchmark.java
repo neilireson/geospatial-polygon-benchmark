@@ -6,20 +6,21 @@ import org.apache.lucene.document.Field;
 import org.apache.lucene.document.LatLonShape;
 import org.apache.lucene.document.ShapeField;
 import org.apache.lucene.document.StoredField;
+import org.apache.lucene.geo.LatLonGeometry;
 import org.apache.lucene.geo.Point;
 import org.apache.lucene.geo.Polygon;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
-import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.TopDocs;
-import org.apache.lucene.search.TopScoreDocCollector;
+import org.apache.lucene.search.ScoreMode;
+import org.apache.lucene.search.SimpleCollector;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.store.NIOFSDirectory;
+import org.apache.lucene.store.RAMDirectory;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -40,8 +41,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.AbstractMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+
+import static org.apache.lucene.search.ScoreMode.COMPLETE_NO_SCORES;
 
 @State(Scope.Thread)
 public class LuceneBenchmark
@@ -51,25 +55,59 @@ public class LuceneBenchmark
     private final String fieldName = "location";
     private IndexSearcher indexSearcher = null;
 
+    private enum LuceneType {
+        ram, mmap, directory;
+
+        public Path getIndexPath(String outputDirectoryName, int numberOfIndexPolygons) {
+            switch (this) {
+                case ram:
+                    return null;
+                case mmap:
+                    return Paths.get(outputDirectoryName, "lucene-polygons-mm-index" + numberOfIndexPolygons);
+                case directory:
+                    return Paths.get(outputDirectoryName, "lucene-polygons-index" + numberOfIndexPolygons);
+                default:
+                    throw new UnsupportedOperationException("LuceneType: " + this);
+            }
+        }
+
+        public Directory getDirectory(String outputDirectoryName, int numberOfIndexPolygons)
+                throws IOException {
+            switch (this) {
+                case ram:
+                    return new RAMDirectory();
+                case mmap:
+                    //noinspection ConstantConditions
+                    return new MMapDirectory(getIndexPath(outputDirectoryName, numberOfIndexPolygons));
+                case directory:
+                    //noinspection ConstantConditions
+                    return NIOFSDirectory.open(getIndexPath(outputDirectoryName, numberOfIndexPolygons));
+                default:
+                    throw new UnsupportedOperationException("LuceneType: " + this);
+            }
+        }
+    }
+
+    private final LuceneType luceneType = LuceneType.mmap;
+
+
     @Setup
     public void setup()
             throws IOException {
 
-        // MMapDirectory makes no difference to performance
-//            Path tempDirectory = Files.createTempDirectory(this.getClass().getName());
-        //            try (Directory directory = new MMapDirectory(tempDirectory);
-        //            try (Directory directory = new RAMDirectory();
-//                 IndexWriter indexWriter = new IndexWriter(directory, new IndexWriterConfig())) {
+        logger.info("Setting up Lucene {}", luceneType);
 
         createDirectory(outputDirectoryName);
-        Path indexPath = Paths.get(outputDirectoryName, "lucene-polygons-index" + numberOfIndexPolygons);
-        if (Files.exists(indexPath)) {
-            final IndexReader indexReader = DirectoryReader.open(NIOFSDirectory.open(indexPath));
+        Path indexPath = luceneType.getIndexPath(outputDirectoryName, numberOfIndexPolygons);
+        if (indexPath != null && Files.exists(indexPath)) {
+            logger.info("Reading Lucene index: {}...", indexPath);
+            final IndexReader indexReader =
+                    DirectoryReader.open(luceneType.getDirectory(outputDirectoryName, numberOfIndexPolygons));
             indexSearcher = new IndexSearcher(indexReader);
             return;
         }
 
-        try (Directory directory = NIOFSDirectory.open(indexPath);
+        try (Directory directory = luceneType.getDirectory(outputDirectoryName, numberOfIndexPolygons);
              IndexWriter indexWriter = new IndexWriter(directory, new IndexWriterConfig())) {
 
             int id = 0;
@@ -77,15 +115,9 @@ public class LuceneBenchmark
             try (ProgressBar progressBar = new ProgressBar("Features:", numberOfIndexPolygons)) {
                 for (double[][] latlons : polygons) {
                     try {
-                        double[] lats = new double[latlons.length];
-                        double[] lons = new double[latlons.length];
-                        for (int i = 0; i < latlons.length; i++) {
-                            lats[i] = latlons[i][0];
-                            lons[i] = latlons[i][1];
-                        }
+                        Polygon polygon = getPolygon(latlons);
                         Document doc = new Document();
                         doc.add(new StoredField("id", ++id));
-                        Polygon polygon = new Polygon(lats, lons);
                         for (Field f : LatLonShape.createIndexableFields(fieldName, polygon)) {
                             doc.add(f);
                         }
@@ -113,39 +145,20 @@ public class LuceneBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 5)
-    public void pointIntersectsQuery() {
+    @Measurement(iterations = 1)
+    public void pointIntersectsQuery() throws IOException {
+
         long candidateCount = 0;
         long nearestCount = 0;
         results.clear();
         for (double[] latlon : getQueryPoints()) {
-            int id = 0;
-            float distance = -1;
-            try {
-                Query query = LatLonShape.newGeometryQuery(fieldName,
-                        ShapeField.QueryRelation.INTERSECTS, new Point(latlon[0], latlon[1]));
-
-                TopScoreDocCollector collector = TopScoreDocCollector.create(1000, 1000);
-                indexSearcher.search(query, collector);
-                TopDocs topDocs = collector.topDocs();
-
-                candidateCount += topDocs.totalHits.value;
-                if (topDocs.totalHits.value != 0) {
-                    ScoreDoc scoreDoc = topDocs.scoreDocs[0];
-                    if (scoreDoc instanceof FieldDoc)
-                        distance = ((Double) ((FieldDoc) scoreDoc).fields[0]).floatValue();
-                    else
-                        distance = scoreDoc.score;
-                    Document doc = indexSearcher.doc(scoreDoc.doc);
-                    id = Integer.parseInt(doc.get("id"));
-                    nearestCount++;
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
+            Point point = new Point(latlon[0], latlon[1]);
+            long totalHits = query(point);
+            if (totalHits > 0) {
+                candidateCount += totalHits;
+                nearestCount++;
             }
-            results.add(new AbstractMap.SimpleImmutableEntry<>(id, (double) distance));
         }
-
         candidateCounts.add(nearestCount == 0 ? 0 : candidateCount / nearestCount);
         nearestCounts.add(nearestCount);
     }
@@ -156,57 +169,54 @@ public class LuceneBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 5)
-    public void polygonIntersectsQuery() {
+    @Measurement(iterations = 1)
+    public void polygonIntersectsQuery() throws IOException {
 
         long candidateCount = 0;
         long nearestCount = 0;
         results.clear();
         for (double[][] latlons : getQueryPolygons()) {
-            int id = 0;
-            float distance = -1;
-            try {
-                double[] lats = new double[latlons.length];
-                double[] lons = new double[latlons.length];
-                for (int i = 0; i < latlons.length; i++) {
-                    lats[i] = latlons[i][0];
-                    lons[i] = latlons[i][1];
-                }
-                Polygon polygon = new Polygon(lats, lons);
-                Query query = LatLonShape.newGeometryQuery(fieldName,
-                        ShapeField.QueryRelation.INTERSECTS, polygon);
-
-                TopScoreDocCollector collector = TopScoreDocCollector.create(1000, 1000);
-                indexSearcher.search(query, collector);
-                TopDocs topDocs = collector.topDocs();
-
-
-                candidateCount += topDocs.totalHits.value;
-                if (topDocs.totalHits.value != 0) {
-                    ScoreDoc scoreDoc = topDocs.scoreDocs[0];
-                    if (scoreDoc instanceof FieldDoc)
-                        distance = ((Double) ((FieldDoc) scoreDoc).fields[0]).floatValue();
-                    else
-                        distance = scoreDoc.score;
-                    Document doc = indexSearcher.doc(scoreDoc.doc);
-                    id = Integer.parseInt(doc.get("id"));
-                    nearestCount++;
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
+            Polygon polygon = getPolygon(latlons);
+            long totalHits = query(polygon);
+            if (totalHits > 0) {
+                candidateCount += totalHits;
+                nearestCount++;
             }
-            results.add(new AbstractMap.SimpleImmutableEntry<>(id, (double) distance));
         }
-
         candidateCounts.add(nearestCount == 0 ? 0 : candidateCount / nearestCount);
         nearestCounts.add(nearestCount);
+    }
+
+    private Polygon getPolygon(double[][] latlons) {
+        double[] lats = new double[latlons.length];
+        double[] lons = new double[latlons.length];
+        for (int i = 0; i < latlons.length; i++) {
+            lats[i] = latlons[i][0];
+            lons[i] = latlons[i][1];
+        }
+        return new Polygon(lats, lons);
+    }
+
+    private long query(LatLonGeometry geometry)
+            throws IOException {
+        int id = 0;
+        float distance = -1;
+        Query query = LatLonShape.newGeometryQuery(fieldName, ShapeField.QueryRelation.INTERSECTS, geometry);
+        TotalHitCollector collector = new TotalHitCollector();
+        indexSearcher.search(query, collector);
+        if (collector.getTotalHits() != 0) {
+            Document doc = indexSearcher.doc(collector.getDoc(0));
+            id = Integer.parseInt(doc.get("id"));
+        }
+        results.add(new AbstractMap.SimpleImmutableEntry<>(id, (double) distance));
+        return collector.getTotalHits();
     }
 
     @TearDown
     public void teardown()
             throws IOException {
         super.teardown();
-        indexSearcher.getIndexReader().close();
+//        indexSearcher.getIndexReader().close();
     }
 
 
@@ -214,7 +224,35 @@ public class LuceneBenchmark
         LuceneBenchmark benchmark = new LuceneBenchmark();
         benchmark.setup();
         benchmark.pointIntersectsQuery();
+        benchmark.teardown();
         benchmark.polygonIntersectsQuery();
         benchmark.teardown();
+    }
+
+    private static class TotalHitCollector extends SimpleCollector {
+
+        private final List<Integer> docs = new ArrayList<>();
+
+        public int getTotalHits() {
+            return docs.size();
+        }
+
+        public int getDoc(int i) {
+            return docs.get(i);
+        }
+
+//        public int[] getDocs() {
+//            return docs.stream().mapToInt(i -> i).toArray();
+//        }
+
+        @Override
+        public void collect(int doc) {
+            docs.add(doc);
+        }
+
+        @Override
+        public ScoreMode scoreMode() {
+            return COMPLETE_NO_SCORES;
+        }
     }
 }
