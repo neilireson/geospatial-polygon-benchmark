@@ -1,9 +1,10 @@
 package uk.ac.shef.wit.geo.benchmark;
 
 import me.tongfei.progressbar.ProgressBar;
+import org.geotools.data.DataStore;
+import org.geotools.data.DataStoreFinder;
 import org.geotools.data.DataUtilities;
 import org.geotools.data.DefaultTransaction;
-import org.geotools.data.FileDataStore;
 import org.geotools.data.FileDataStoreFinder;
 import org.geotools.data.Transaction;
 import org.geotools.data.collection.ListFeatureCollection;
@@ -57,6 +58,7 @@ import java.lang.invoke.MethodHandles;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -64,6 +66,9 @@ import java.util.concurrent.TimeUnit;
 public class GeotoolsBenchmark
         extends AbstractBenchmark {
 
+    private enum DatastoreType {shapefile, h2}
+
+    private final DatastoreType datastoreType = DatastoreType.shapefile;
     private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final FilterFactory2 ff = CommonFactoryFinder.getFilterFactory2();
     private SpatialIndexFeatureCollection index;
@@ -81,37 +86,48 @@ public class GeotoolsBenchmark
         SimpleFeatureType polygonFeature = polyTypeBuilder.buildFeatureType();
 
         createDirectory(outputDirectoryName);
-        File shapefile = new File(outputDirectoryName, "benchmark-polygons-" + numberOfIndexPolygons + ".shp");
+        String fileNamePrefix= "benchmark-polygons-" + numberOfIndexPolygons;
+        File shapefile = new File(outputDirectoryName, fileNamePrefix + ".shp");
+        File h2DbFile = new File(outputDirectoryName, fileNamePrefix + "-h2-index");
 
-        final SimpleFeatureCollection featureCollection;
-        if (shapefile.exists()) {
-            logger.info("Reading features from shapefile: {}", shapefile);
-            try {
-                FileDataStore store = FileDataStoreFinder.getDataStore(shapefile);
-                SimpleFeatureSource featureSource = store.getFeatureSource();
-                SimpleFeatureCollection collection = featureSource.getFeatures();
-                int size = collection.size();
-                if (size != numberOfIndexPolygons) {
-                    throw new RuntimeException("Unexpected number of features in shapefile:" +
-                            shapefile + " expected=" + numberOfIndexPolygons + ", read=" + size);
+        SimpleFeatureCollection featureCollection = null;
+        switch (datastoreType) {
+            case shapefile:
+                if (shapefile.exists()) {
+                    try {
+                        featureCollection = getFeatureCollection(datastoreType,
+                                FileDataStoreFinder.getDataStore(shapefile),
+                                fileNamePrefix);
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to read features from shapefile: " + shapefile, e);
+                    }
                 }
-//                showFeatures(featureSource);
+                break;
+            case h2:
+                if (h2DbFile.exists()) {
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("dbtype", "h2");
+                    params.put("database", h2DbFile.getAbsolutePath());
 
-                logger.info("Wrapping features in a collection");
-                featureCollection = DataUtilities.collection(featureSource.getFeatures());
-                store.dispose();
+                    try {
+                        DataStore datastore = DataStoreFinder.getDataStore(params);
+                        featureCollection = getFeatureCollection(datastoreType, datastore,"h2");
+                    } catch (IOException e) {
+                        throw new RuntimeException("Failed to read features from h2: " + h2DbFile, e);
+                    }
+                }
+                break;
 
-                logger.info("Finished reading {} features from shapefile: {}", size, shapefile);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to read features from shapefile: " + shapefile, e);
-            }
-        } else {
+        }
+
+        if (featureCollection == null) {
             logger.info("Creating {} features", numberOfIndexPolygons);
 
             ArrayList<SimpleFeature> features = new ArrayList<>();
             int id = 0;
+            List<double[][]> polygons = getIndexPolygons();
             try (ProgressBar progressBar = new ProgressBar("Features:", numberOfIndexPolygons)) {
-                for (double[][] latlons : getIndexPolygons()) {
+                for (double[][] latlons : polygons) {
                     Coordinate[] coords = new Coordinate[latlons.length];
                     for (int i = 0; i < coords.length; i++) {
                         coords[i] = new Coordinate(latlons[i][1], latlons[i][0]);
@@ -131,15 +147,44 @@ public class GeotoolsBenchmark
 
             logger.info("Wrapping features in a collection");
             featureCollection = DataUtilities.collection(features);
-            logger.info("Writing features to shapefile: {}", shapefile);
-            try {
-                writeToShapefile(shapefile, polygonFeature, features);
-            } catch (IOException e) {
-                logger.error("Failed to write shapefile", e);
+
+            logger.info("Writing features to shapefile: {}", datastoreType);
+            switch (datastoreType) {
+                case shapefile:
+                    try {
+                        writeToShapefile(shapefile, polygonFeature, features);
+                    } catch (IOException e) {
+                        logger.error("Failed to write shapefile", e);
+                    }
+                    break;
+                case h2:
+                default:
+                    throw new UnsupportedOperationException();
             }
         }
         index = new SpatialIndexFeatureCollection(featureCollection.getSchema());
         index.addAll(featureCollection);
+    }
+
+    private SimpleFeatureCollection getFeatureCollection(DatastoreType datastoreType, DataStore store, String typeName)
+            throws IOException {
+
+        logger.info("Reading features from {}", datastoreType);
+        SimpleFeatureSource featureSource = store.getFeatureSource(typeName);
+        SimpleFeatureCollection collection = featureSource.getFeatures();
+        int size = collection.size();
+        if (size != numberOfIndexPolygons) {
+            throw new RuntimeException("Unexpected number of features in " +
+                    datastoreType + ": expected=" + numberOfIndexPolygons + ", read=" + size);
+        }
+//                showFeatures(featureSource);
+
+        logger.info("Wrapping features in a collection");
+        SimpleFeatureCollection featureCollection = DataUtilities.collection(featureSource.getFeatures());
+        store.dispose();
+
+        logger.info("Finished reading {} features from {}", size, datastoreType);
+        return featureCollection;
     }
 
     private void showFeatures(SimpleFeatureSource featureSource) {
@@ -160,7 +205,7 @@ public class GeotoolsBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 5)
+    @Measurement(iterations = 1)
     public void pointIntersectsQuery() throws TransformException {
 
         GeodeticCalculator gc = new GeodeticCalculator(DefaultGeographicCRS.WGS84);
@@ -210,7 +255,7 @@ public class GeotoolsBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 5)
+    @Measurement(iterations = 1)
     public void polygonIntersectsQuery() throws TransformException {
 
         GeodeticCalculator gc = new GeodeticCalculator(DefaultGeographicCRS.WGS84);
@@ -345,6 +390,11 @@ public class GeotoolsBenchmark
     }
 
     public static void main(String[] args) throws IOException {
+//        for (Iterator<DataStoreFactorySpi> i = DataStoreFinder.getAvailableDataStores(); i.hasNext(); ) {
+//            DataStoreFactorySpi factory = i.next();
+//            System.out.println(factory.getDisplayName());
+//        }
+
         GeotoolsBenchmark benchmark = new GeotoolsBenchmark();
         benchmark.setup();
         try {
