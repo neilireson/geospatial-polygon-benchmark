@@ -212,7 +212,6 @@ public class GeotoolsBenchmark
 
         long candidateCount = 0;
         long nearestCount = 0;
-        results.clear();
         for (double[] latlon : getQueryPoints()) {
             SimpleFeature nearestFeature = null;
             double nearestDistance = Double.POSITIVE_INFINITY;
@@ -262,7 +261,6 @@ public class GeotoolsBenchmark
 
         long candidateCount = 0;
         long nearestCount = 0;
-        results.clear();
         for (double[][] latlons : getQueryPolygons()) {
             SimpleFeature nearestFeature = null;
             double nearestDistance = Double.POSITIVE_INFINITY;
@@ -399,10 +397,11 @@ public class GeotoolsBenchmark
         benchmark.setup();
         try {
             benchmark.pointIntersectsQuery();
+            benchmark.teardown();
             benchmark.polygonIntersectsQuery();
+            benchmark.teardown();
         } catch (TransformException e) {
             throw new IOException(e);
         }
-        benchmark.teardown();
     }
 }

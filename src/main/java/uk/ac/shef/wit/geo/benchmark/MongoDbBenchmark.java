@@ -2,6 +2,7 @@ package uk.ac.shef.wit.geo.benchmark;
 
 import com.mongodb.client.FindIterable;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.geojson.Point;
 import com.mongodb.client.model.geojson.Polygon;
 import com.mongodb.client.model.geojson.Position;
 import com.mongodb.MongoClient;
@@ -106,12 +107,42 @@ public class MongoDbBenchmark
     @Fork(value = 1)
     @Warmup(iterations = 0)
     @Measurement(iterations = 1)
+    public void pointQuery() {
+        MongoDatabase db = mongoClient.getDatabase(placesDbName);
+        MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);
+        long foundCount = 0;
+        long intersectingCount = 0;
+        for (double[] latlon : getQueryPoints()) {
+            int id = 0;
+            float distance = -1;
+            Point point = new Point(new Position(latlon[1], latlon[0]));
+            FindIterable<Document> found = collection.find(Filters.geoIntersects(fieldName, point));
+            if (found.iterator().hasNext()) {
+                foundCount++;
+                for (Document doc : found) {
+                    intersectingCount++;
+                    id = doc.getInteger("id");
+                }
+            }
+
+            results.add(new AbstractMap.SimpleImmutableEntry<>(id, (double) distance));
+        }
+
+        candidateCounts.add(foundCount == 0 ? 0 : intersectingCount / foundCount);
+        nearestCounts.add(foundCount);
+    }
+
+    @Benchmark
+    @BenchmarkMode(Mode.Throughput)
+    @OutputTimeUnit(TimeUnit.SECONDS)
+    @Fork(value = 1)
+    @Warmup(iterations = 0)
+    @Measurement(iterations = 1)
     public void polygonQuery() {
         MongoDatabase db = mongoClient.getDatabase(placesDbName);
         MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);
         long foundCount = 0;
         long intersectingCount = 0;
-        results.clear();
         for (double[][] latlons : getQueryPolygons()) {
             int id = 0;
             float distance = -1;
@@ -140,13 +171,15 @@ public class MongoDbBenchmark
     @TearDown
     public void teardown() throws IOException {
         super.teardown();
-        mongoClient.close();
+//        mongoClient.close();
     }
 
 
     public static void main(String[] args) throws IOException {
         MongoDbBenchmark benchmark = new MongoDbBenchmark();
         benchmark.setup();
+        benchmark.pointQuery();
+        benchmark.teardown();
         benchmark.polygonQuery();
         benchmark.teardown();
     }

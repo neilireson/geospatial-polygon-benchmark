@@ -150,7 +150,6 @@ public class LuceneBenchmark
 
         long candidateCount = 0;
         long nearestCount = 0;
-        results.clear();
         for (double[] latlon : getQueryPoints()) {
             Point point = new Point(latlon[0], latlon[1]);
             long totalHits = query(point);
@@ -174,7 +173,6 @@ public class LuceneBenchmark
 
         long candidateCount = 0;
         long nearestCount = 0;
-        results.clear();
         for (double[][] latlons : getQueryPolygons()) {
             Polygon polygon = getPolygon(latlons);
             long totalHits = query(polygon);
