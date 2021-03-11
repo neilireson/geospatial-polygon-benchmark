@@ -70,10 +70,9 @@ public class MongoDbBenchmark
         indexOptions.bits(geoHashBits);
         collection.createIndex(Indexes.geo2dsphere(fieldName), indexOptions);
 
+        int id = 0;
+        List<double[][]> polygons = getIndexPolygons();
         try (ProgressBar progressBar = new ProgressBar("Features:", numberOfIndexPolygons)) {
-
-            int id = 0;
-            List<double[][]> polygons = getIndexPolygons();
             for (double[][] latlons : polygons) {
                 try {
                     List<Position> positions = new ArrayList<>();
@@ -106,7 +105,7 @@ public class MongoDbBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 5)
+    @Measurement(iterations = 1)
     public void polygonQuery() {
         MongoDatabase db = mongoClient.getDatabase(placesDbName);
         MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);
@@ -134,7 +133,7 @@ public class MongoDbBenchmark
             results.add(new AbstractMap.SimpleImmutableEntry<>(id, (double) distance));
         }
 
-        candidateCounts.add(foundCount == 0 ? 0 : intersectingCount);
+        candidateCounts.add(foundCount == 0 ? 0 : intersectingCount / foundCount);
         nearestCounts.add(foundCount);
     }
 
