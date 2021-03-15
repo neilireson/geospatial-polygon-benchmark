@@ -1,6 +1,7 @@
 package uk.ac.shef.wit.geo.benchmark;
 
 import com.mongodb.client.FindIterable;
+import com.mongodb.client.MongoIterable;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.geojson.Point;
 import com.mongodb.client.model.geojson.Polygon;
@@ -12,6 +13,12 @@ import com.mongodb.client.model.IndexOptions;
 import com.mongodb.client.model.Indexes;
 import me.tongfei.progressbar.ProgressBar;
 import org.bson.Document;
+import org.geotools.data.DataStore;
+import org.geotools.data.simple.SimpleFeatureCollection;
+import org.geotools.data.simple.SimpleFeatureIterator;
+import org.json.simple.JSONValue;
+import org.locationtech.jts.geom.Geometry;
+import org.opengis.feature.simple.SimpleFeature;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -26,11 +33,11 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Thread)
@@ -46,6 +53,7 @@ public class MongoDbBenchmark
     public static final int geoHashBits = 26;
     private final String fieldName = "location";
     private final MongoClient mongoClient;
+    String collectionName = placesCollectionName + "_" + configName;
 
     public MongoDbBenchmark() {
         this.mongoClient = new MongoClient();
@@ -53,49 +61,73 @@ public class MongoDbBenchmark
 
     @Setup
     public void setup() {
+
         MongoDatabase db = mongoClient.getDatabase(placesDbName);
-        for (String collectionName : db.listCollectionNames()) {
-            logger.info("Collection: {}", collectionName);
+        //        db.drop();
+
+        logger.info("Checking if database contains collection");
+        MongoIterable<String> collections = db.listCollectionNames();
+        boolean collectionExists = false;
+        if (collections.iterator().hasNext()) {
+            StringBuilder sb = new StringBuilder();
+            for (String name : collections) {
+                sb.append('\n').append("Collection: ").append(name);
+                if (collectionName.equals(name)) {
+                    collectionExists = true;
+                    sb.append(" *");
+                }
+            }
+            logger.info("Available collections:{}", sb);
+        } else {
+            logger.info("Database currently has no collections");
         }
-//        db.drop();
-        MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);
-        long count = collection.countDocuments();
-        if (count == numberOfIndexPolygons) return;
-        else if (count > 0) {
-            logger.error("Unexpected number of features in collection:{} expected={}, read={}",
-                    placesCollectionName, numberOfIndexPolygons, count);
-            collection.deleteMany(new Document());
+        MongoCollection<Document> collection = db.getCollection(collectionName);
+
+        Map.Entry<DataStore, SimpleFeatureCollection> dataStoreCollection = getIndexPolygons();
+        DataStore dataStore = dataStoreCollection.getKey();
+        SimpleFeatureCollection polygons = dataStoreCollection.getValue();
+
+        if (collectionExists) {
+            long count = collection.countDocuments();
+            if (count == 0) {
+                logger.error("Collection {} is empty", collectionName);
+            } else if (config.getNumberOfIndexPoints() != null && config.getNumberOfIndexPoints() != count) {
+                logger.error("Collection contains incorrect number of points. Expected {}, found {}",
+                        config.getNumberOfIndexPoints(), collection.countDocuments());
+                collection.deleteMany(new Document());
+            } else {
+                logger.info("Collection {} contains {} documents", collectionName, collection.countDocuments());
+                return;
+            }
         }
 
         IndexOptions indexOptions = new IndexOptions();
         indexOptions.bits(geoHashBits);
         collection.createIndex(Indexes.geo2dsphere(fieldName), indexOptions);
 
-        int id = 0;
-        List<double[][]> polygons = getIndexPolygons();
-        try (ProgressBar progressBar = new ProgressBar("Features:", numberOfIndexPolygons)) {
-            for (double[][] latlons : polygons) {
+        logger.info("Indexing polygons...");
+        try (ProgressBar progressBar = new ProgressBar("Features:", polygons.size());
+             SimpleFeatureIterator it = polygons.features()) {
+            int id = 0;
+            while (it.hasNext()) {
+                SimpleFeature feature = it.next();
+                Geometry geometry = (Geometry) feature.getDefaultGeometry();
                 try {
-                    List<Position> positions = new ArrayList<>();
-                    for (double[] latlon : latlons) {
-                        positions.add(new Position(latlon[1], latlon[0]));
-                    }
-                    @SuppressWarnings("unchecked")
-                    Polygon polygon = new Polygon(positions);
-
                     Document doc = new Document();
-                    doc.append("id", ++id);
-                    doc.append(fieldName, polygon);
+                    doc.append("id", String.valueOf(++id));
+                    String geoJSON = geometryJSON.get().toString(geometry);
+                    doc.append(fieldName, JSONValue.parse(geoJSON));
                     collection.insertOne(doc);
 
                     progressBar.step();
                 } catch (Exception e) {
-                    for (double[] latlon : latlons) {
-                        System.out.println(" " + latlon[1] + "," + latlon[0]);
-                    }
-                    System.out.println();
+                    logger.error("Failed to add feature: " + feature);
                     throw e;
                 }
+            }
+        } finally {
+            if (dataStore != null) {
+                dataStore.dispose();
             }
         }
     }
@@ -109,11 +141,11 @@ public class MongoDbBenchmark
     @Measurement(iterations = 1)
     public void pointQuery() {
         MongoDatabase db = mongoClient.getDatabase(placesDbName);
-        MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);
+        MongoCollection<Document> collection = db.getCollection(collectionName);
         long foundCount = 0;
         long intersectingCount = 0;
         for (double[] latlon : getQueryPoints()) {
-            int id = 0;
+            String id = "0";
             float distance = -1;
             Point point = new Point(new Position(latlon[1], latlon[0]));
             FindIterable<Document> found = collection.find(Filters.geoIntersects(fieldName, point));
@@ -121,7 +153,7 @@ public class MongoDbBenchmark
                 foundCount++;
                 for (Document doc : found) {
                     intersectingCount++;
-                    id = doc.getInteger("id");
+                    id = doc.getString("id");
                 }
             }
 
@@ -140,11 +172,11 @@ public class MongoDbBenchmark
     @Measurement(iterations = 1)
     public void polygonQuery() {
         MongoDatabase db = mongoClient.getDatabase(placesDbName);
-        MongoCollection<Document> collection = db.getCollection(placesCollectionName + numberOfIndexPolygons);
+        MongoCollection<Document> collection = db.getCollection(collectionName);
         long foundCount = 0;
         long intersectingCount = 0;
         for (double[][] latlons : getQueryPolygons()) {
-            int id = 0;
+            String id = "0";
             float distance = -1;
             List<Position> positions = new ArrayList<>();
             for (double[] latlon : latlons) {
@@ -157,7 +189,7 @@ public class MongoDbBenchmark
                 foundCount++;
                 for (Document doc : found) {
                     intersectingCount++;
-                    id = doc.getInteger("id");
+                    id = doc.getString("id");
                 }
             }
 
@@ -169,18 +201,26 @@ public class MongoDbBenchmark
     }
 
     @TearDown
-    public void teardown() throws IOException {
+    public void teardown() {
         super.teardown();
-//        mongoClient.close();
     }
 
 
-    public static void main(String[] args) throws IOException {
-        MongoDbBenchmark benchmark = new MongoDbBenchmark();
-        benchmark.setup();
-        benchmark.pointQuery();
-        benchmark.teardown();
-        benchmark.polygonQuery();
-        benchmark.teardown();
+    public static void main(String[] args) {
+
+        try (MongoDbBenchmark benchmark = new MongoDbBenchmark()) {
+            benchmark.setup();
+            benchmark.pointQuery();
+            benchmark.teardown();
+            benchmark.polygonQuery();
+            benchmark.teardown();
+        } catch (Exception e) {
+            logger.error("", e);
+        }
+    }
+
+    @Override
+    public void close() {
+        mongoClient.close();
     }
 }

@@ -1,7 +1,37 @@
 package uk.ac.shef.wit.geo.benchmark;
 
+import me.tongfei.progressbar.ProgressBar;
+import org.geotools.data.DataStore;
+import org.geotools.data.DataUtilities;
+import org.geotools.data.DefaultTransaction;
+import org.geotools.data.FileDataStoreFinder;
+import org.geotools.data.Transaction;
+import org.geotools.data.collection.ListFeatureCollection;
+import org.geotools.data.shapefile.ShapefileDataStore;
+import org.geotools.data.shapefile.ShapefileDataStoreFactory;
+import org.geotools.data.simple.SimpleFeatureCollection;
+import org.geotools.data.simple.SimpleFeatureIterator;
+import org.geotools.data.simple.SimpleFeatureSource;
+import org.geotools.data.simple.SimpleFeatureStore;
+import org.geotools.feature.simple.SimpleFeatureBuilder;
+import org.geotools.feature.simple.SimpleFeatureTypeBuilder;
+import org.geotools.geojson.geom.GeometryJSON;
+import org.geotools.geometry.jts.JTS;
+import org.geotools.map.FeatureLayer;
+import org.geotools.map.Layer;
+import org.geotools.map.MapContent;
+import org.geotools.referencing.crs.DefaultGeographicCRS;
+import org.geotools.styling.SLD;
+import org.geotools.styling.Style;
+import org.geotools.swing.JMapFrame;
+import org.locationtech.jts.geom.Coordinate;
+import org.locationtech.jts.geom.Envelope;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.geom.GeometryFactory;
-import org.openjdk.jmh.annotations.Param;
+import org.locationtech.jts.geom.Polygon;
+import org.opengis.feature.simple.SimpleFeature;
+import org.opengis.feature.simple.SimpleFeatureType;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.results.RunResult;
@@ -9,84 +39,300 @@ import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.FileReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.Serializable;
+import java.lang.invoke.MethodHandles;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.AbstractMap;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Pattern;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 import static java.lang.Math.*;
 
 @State(Scope.Benchmark)
-public abstract class AbstractBenchmark {
+public abstract class AbstractBenchmark implements AutoCloseable {
 
+    private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     static final GeometryFactory gf = new GeometryFactory();
-    static final String outputDirectoryName = "out";
+    private static final String outputDirectoryName = "out";
     private static final Random random = new Random();
 
+    final int decimalPrecision = 8;
+    // todo an alternative would be to use Jackson, which may be faster
+    // see https://mvnrepository.com/artifact/org.n52.jackson/jackson-datatype-jts
+    final ThreadLocal<GeometryJSON> geometryJSON = ThreadLocal.withInitial(() -> new GeometryJSON(decimalPrecision));
+
     //        @Param({"10000", "100000"})
-    int numberOfIndexPolygons = 1234;
-
-    int numberOfQueryPoints = 10000;
-
-    //    @Param({"1000", "10000", "100000"})
-    int queryRadiusMetres = 1000;
-
-    // roughly the bounding box for England
-    int minLat = 50;
-    int maxLat = 56;
-    int minLon = -2;
-    int maxLon = 2;
-
-    // random polygon parameters
-    int minVertices = 5;
-    int maxVertices = 12;
-    // the beta distribution determines the likelihood of polygon radius
-    // 1,1 is uniform; 1,2 linear decrease; 2,1 linear increase; 5,5 approx normal pdf;
-    // 8,2
-//    AbstractRealDistribution radiusBetaPDF = new BetaDistribution(1.0, 1.0);
-    float irregularity = 1f;
-    float spikiness = 1f;
-    // increasing lambda increases the likelihood of polygons with a minRadius
-    // -log(1 - (1 - exp(-lambda)) * U) / lambda;
-    // basically the exponential distribution (-log(1-U)/2) bounded [0,1]
-    double lambda = 10;
-    float minRadius = 400;
-    float maxRadius = 4000;
+    final String configName = "england-buildings";
+    TrialConfiguration config;
 
     final List<Long> candidateCounts = new ArrayList<>();
     final List<Long> nearestCounts = new ArrayList<>();
-    final List<Map.Entry<Integer, Double>> results = new ArrayList<>();
+    final List<Map.Entry<String, Double>> results = new ArrayList<>();
 
-    synchronized List<double[][]> getIndexPolygons() {
-        return getPolygons("benchmark-index-polygons", numberOfIndexPolygons);
+    final SimpleFeatureType polygonFeature;
+
+    {
+        SimpleFeatureTypeBuilder polyTypeBuilder = new SimpleFeatureTypeBuilder();
+        polyTypeBuilder.setName("Polygon");
+        polyTypeBuilder.setNamespaceURI("Polygon");
+        polyTypeBuilder.setCRS(DefaultGeographicCRS.WGS84);
+        // Note "the_geom" seems to be necessary name for shapefile read/write
+        polyTypeBuilder.add("the_geom", Polygon.class);
+        polyTypeBuilder.setDefaultGeometry("the_geom");
+        polygonFeature = polyTypeBuilder.buildFeatureType();
     }
 
-    synchronized List<double[]> getQueryPoints() {
-        return getPoints("benchmark-query-points", numberOfQueryPoints);
+    public AbstractBenchmark() {
+        File outputDirectory = createDirectory(outputDirectoryName);
+
+        Pattern configFilePattern = Pattern.compile("^" + configName + "(\\.(cnf|conf|config|xml))?$");
+        File[] configFiles = outputDirectory.listFiles(file -> {
+            if (!file.isFile()) return false;
+            return configFilePattern.matcher(file.getName()).matches();
+        });
+
+        if (configFiles == null || configFiles.length == 0)
+            throw new IllegalArgumentException("Configuration file not found: " + configName);
+        else if (configFiles.length > 1)
+            throw new IllegalArgumentException("Multiple configuration files found: " + configName + ": " +
+                    Arrays.toString(configFiles));
+
+        logger.info("Reading trial configuration file: {}", configFiles[0].getPath());
+        config = TrialConfiguration.create(configFiles[0].getPath());
     }
 
-    synchronized List<double[][]> getQueryPolygons() {
-        return getPolygons("benchmark-query-polygons", numberOfQueryPoints);
+    synchronized Map.Entry<DataStore, SimpleFeatureCollection> getIndexPolygons() {
+
+        DataStore dataStore = null;
+        final SimpleFeatureCollection polygons;
+
+        String fileNamePrefix = "benchmark-index-polygons-" + configName;
+        Path generatedShapefile = Paths.get(fileNamePrefix + ".shp");
+
+        if (config.getShapeFile() != null) {
+            Path shapefile = Paths.get(config.getShapeFile());
+            if (Files.exists(shapefile)) {
+                try {
+                    dataStore = FileDataStoreFinder.getDataStore(shapefile.toFile());
+                    SimpleFeatureSource featureSource = dataStore.getFeatureSource(config.getTypeName());
+                    polygons = featureSource.getFeatures();
+                } catch (IOException e) {
+                    if (dataStore != null) {
+                        dataStore.dispose();
+                    }
+                    throw new RuntimeException("Failed to read features from shapefile: " + shapefile, e);
+                }
+            } else {
+                throw new RuntimeException("Index source Shapefile does not exist: " + shapefile);
+            }
+        } else if (Files.exists(generatedShapefile)) {
+            try {
+                dataStore = FileDataStoreFinder.getDataStore(generatedShapefile.toFile());
+                SimpleFeatureSource featureSource = dataStore.getFeatureSource(fileNamePrefix);
+                polygons = featureSource.getFeatures();
+            } catch (IOException e) {
+                if (dataStore != null) {
+                    dataStore.dispose();
+                }
+                throw new RuntimeException("Failed to read features from shapefile: " + generatedShapefile, e);
+            }
+        } else {
+            List<double[][]> indexPolygons = new ArrayList<>();
+            for (int i = 0; i < config.getNumberOfIndexPoints(); i++) {
+                indexPolygons.add(createPolygon(config.getBoundingBox(), null));
+            }
+            ArrayList<SimpleFeature> features = new ArrayList<>();
+            try (ProgressBar progressBar = new ProgressBar("Features:", config.getNumberOfIndexPoints())) {
+                for (double[][] latlons : indexPolygons) {
+                    progressBar.step();
+
+                    Coordinate[] coords = new Coordinate[latlons.length];
+                    for (int i = 0; i < coords.length; i++) {
+                        coords[i] = new Coordinate(latlons[i][1], latlons[i][0]);
+                    }
+                    Polygon polygon = gf.createPolygon(coords);
+                    SimpleFeature feature = createSimpleFeature(polygonFeature, polygon);
+
+                    if (feature != null) {
+                        features.add(feature);
+                    } else {
+                        logger.error("Not a valid feature");
+                    }
+                }
+            }
+            try {
+                writeToShapefile(generatedShapefile.toFile(), polygonFeature, features);
+            } catch (IOException e) {
+                logger.error("Failed to write shapefile", e);
+            }
+
+            logger.info("Wrapping features in a collection");
+            polygons = DataUtilities.collection(features);
+        }
+
+        checkBoundingBox(polygons);
+
+        return new AbstractMap.SimpleImmutableEntry<>(dataStore, polygons);
     }
 
-    private List<double[]> getPoints(String prefix, int numberOfPoints) {
+    void checkBoundingBox(SimpleFeatureCollection indexFeatureCollection) {
+
+        Path queryPointsFilePath = getQueryPointsFilePath();
+        Path queryPolygonsFilePath = getQueryPolygonsFilePath();
+        if (!Files.exists(queryPointsFilePath) || !Files.exists(queryPolygonsFilePath)) {
+            logger.info("Creating points/polygon query files");
+            Geometry convexHullGeometry = convexHull(indexFeatureCollection);
+            Polygon convexHull = convexHullGeometry instanceof Polygon ? (Polygon) convexHullGeometry : null;
+            Envelope boundingBox = convexHull == null ? config.getBoundingBox() : convexHullGeometry.getEnvelopeInternal();
+            if (boundingBox == null) {
+                throw new NullPointerException("Boundary box not available from configuration file or index feature collection");
+            }
+
+            // create query points and polygons that are within the index polygons
+            getQueryPoints(boundingBox, convexHull);
+            getQueryPolygons(boundingBox, convexHull);
+        }
+    }
+
+    public static SimpleFeature createSimpleFeature(SimpleFeatureType schema, Geometry geometry) {
+        if (geometry != null) {
+            if (geometry.isValid()) {
+                SimpleFeatureBuilder featureBuilder = new SimpleFeatureBuilder(schema);
+                featureBuilder.add(geometry);
+                return featureBuilder.buildFeature(null);
+            } else {
+                logger.error("Feature geometry is not valid: " + geometry);
+                DrawShapes.draw(geometry);
+                throw new IllegalArgumentException("Feature geometry is not valid");
+            }
+        }
+        return null;
+    }
+
+    private void writeToShapefile(File shapefile, SimpleFeatureType type, ArrayList<SimpleFeature> features)
+            throws IOException {
+
+        ShapefileDataStore dataStore = null;
+        try {
+            ShapefileDataStoreFactory dataStoreFactory = new ShapefileDataStoreFactory();
+
+            Map<String, Serializable> params = new HashMap<>();
+            params.put("url", shapefile.toURI().toURL());
+            params.put("create spatial index", Boolean.TRUE);
+
+            dataStore = (ShapefileDataStore) dataStoreFactory.createNewDataStore(params);
+
+            /*
+             * TYPE is used as a template to describe the file contents
+             */
+            dataStore.createSchema(type);
+
+            /*
+             * Write the features to the shapefile
+             */
+            Transaction transaction = new DefaultTransaction("create");
+
+            String[] typeNames = dataStore.getTypeNames();
+            String typeName = typeNames[0];
+            SimpleFeatureSource featureSource = dataStore.getFeatureSource(typeName);
+            SimpleFeatureType SHAPE_TYPE = featureSource.getSchema();
+            /*
+             * The Shapefile format has a couple limitations:
+             * - "the_geom" is always first, and used for the geometry attribute name
+             * - "the_geom" must be of type Point, MultiPoint, MuiltiLineString, MultiPolygon
+             * - Attribute names are limited in length
+             * - Not all data types are supported (example Timestamp represented as Date)
+             *
+             * Each data store has different limitations so check the resulting SimpleFeatureType.
+             */
+            logger.info("SHAPE:{}", SHAPE_TYPE);
+
+            if (featureSource instanceof SimpleFeatureStore) {
+                SimpleFeatureStore featureStore = (SimpleFeatureStore) featureSource;
+                /*
+                 * SimpleFeatureStore has a method to add features from a
+                 * SimpleFeatureCollection object, so we use the ListFeatureCollection
+                 * class to wrap our list of features.
+                 */
+                SimpleFeatureCollection collection = new ListFeatureCollection(type, features);
+                featureStore.setTransaction(transaction);
+                try {
+                    featureStore.addFeatures(collection);
+                    transaction.commit();
+                } catch (Exception e) {
+                    logger.error("Failed to add features to shapefile", e);
+                    transaction.rollback();
+                } finally {
+                    transaction.close();
+                }
+            } else {
+                logger.error("{} does not support read/write access", typeName);
+            }
+        } finally {
+            if (dataStore != null)
+                dataStore.dispose();
+        }
+    }
+
+
+    List<double[]> getQueryPoints() {
+        return getQueryPoints(config.getBoundingBox(), null);
+    }
+
+    List<double[]> getQueryPoints(Envelope boundingBox, Polygon polygon) {
+        return getPoints(getQueryPointsFilePath(), config.getNumberOfQueryPoints(), boundingBox, polygon);
+    }
+
+    List<double[][]> getQueryPolygons() {
+        return getQueryPolygons(config.getBoundingBox(), null);
+    }
+
+    List<double[][]> getQueryPolygons(Envelope boundingBox, Polygon polygon) {
+        return getPolygons(getQueryPolygonsFilePath(), config.getNumberOfQueryPoints(),
+                boundingBox, polygon);
+    }
+
+    private Path getQueryPointsFilePath() {
         createDirectory(outputDirectoryName);
-        String filename = prefix + "-" + numberOfPoints + ".csv";
-        Path path = Paths.get(outputDirectoryName, filename);
+        String filename = "benchmark-query-points-" + configName + "-" + config.getNumberOfQueryPoints() + ".csv.gz";
+        return Paths.get(outputDirectoryName, filename);
+    }
+
+    private Path getQueryPolygonsFilePath() {
+        createDirectory(outputDirectoryName);
+        String filename = "benchmark-query-polygons-" + configName + "-" + config.getNumberOfQueryPoints() + ".csv.gz";
+        return Paths.get(outputDirectoryName, filename);
+    }
+
+    private synchronized List<double[]> getPoints(Path pointFilePath, int numberOfPoints,
+                                                  Envelope boundingBox, Polygon polygon) {
         List<double[]> indexPoints = new ArrayList<>();
-        if (Files.exists(path)) {
-            try (BufferedReader reader = new BufferedReader(new FileReader(path.toFile()))) {
+        if (Files.exists(pointFilePath)) {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(new GZIPInputStream(new FileInputStream(pointFilePath.toFile()))))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     String[] latlon = line.split(",");
@@ -100,28 +346,35 @@ public abstract class AbstractBenchmark {
                         numberOfPoints + " found " + indexPoints.size());
             }
         } else {
-            for (int i = 0; i < numberOfPoints; i++) {
-                indexPoints.add(createRandomLatLon());
-            }
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(path.toFile()))) {
-                for (double[] latlon : indexPoints) {
+            logger.info("Creating {} points", numberOfPoints);
+            try (BufferedWriter writer = new BufferedWriter(
+                    new OutputStreamWriter(new GZIPOutputStream(new FileOutputStream(pointFilePath.toFile()))))) {
+                for (int i = 0; i < numberOfPoints; i++) {
+                    double[] latlon = createRandomLatLon(boundingBox, polygon);
+                    indexPoints.add(latlon);
                     writer.write(latlon[0] + "," + latlon[1]);
                     writer.newLine();
                 }
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                try {
+                    Files.delete(pointFilePath);
+                } catch (IOException e2) {
+                    logger.error("Failed to delete points file: {}", pointFilePath);
+                }
+                throw new RuntimeException("Failed to create points", e);
             }
         }
         return indexPoints;
     }
 
-    private List<double[][]> getPolygons(String prefix, int numberOfPolygons) {
-        createDirectory(outputDirectoryName);
-        String filename = prefix + "-" + numberOfPolygons + ".csv";
-        Path path = Paths.get(outputDirectoryName, filename);
+    private synchronized List<double[][]> getPolygons(Path polygonFilePath, int numberOfPolygons,
+                                                      Envelope boundingBox,
+                                                      Polygon polygon) {
+
         List<double[][]> indexPolygons = new ArrayList<>();
-        if (Files.exists(path)) {
-            try (BufferedReader reader = new BufferedReader(new FileReader(path.toFile()))) {
+        if (Files.exists(polygonFilePath)) {
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(new GZIPInputStream(new FileInputStream(polygonFilePath.toFile()))))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     String[] xys = line.split(" ");
@@ -140,52 +393,68 @@ public abstract class AbstractBenchmark {
                         numberOfPolygons + " found " + indexPolygons.size());
             }
         } else {
-            for (int i = 0; i < numberOfPolygons; i++) {
-                indexPolygons.add(createPolygon());
-            }
-            try (BufferedWriter writer = new BufferedWriter(new FileWriter(path.toFile()))) {
-                for (double[][] latlons : indexPolygons) {
+            logger.info("Creating {} polygons", numberOfPolygons);
+            try (BufferedWriter writer = new BufferedWriter(
+                    new OutputStreamWriter(new GZIPOutputStream(new FileOutputStream(polygonFilePath.toFile()))))) {
+                for (int i = 0; i < numberOfPolygons; i++) {
+                    double[][] latlons = createPolygon(boundingBox, polygon);
+                    indexPolygons.add(latlons);
                     writer.write(latlons[0][1] + "," + latlons[0][0]);
-                    for (int i = 1; i < latlons.length; i++) {
-                        writer.write(" " + latlons[i][1] + "," + latlons[i][0]);
+                    for (int j = 1; j < latlons.length; j++) {
+                        writer.write(" " + latlons[j][1] + "," + latlons[j][0]);
                     }
                     writer.newLine();
                 }
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                try {
+                    Files.delete(polygonFilePath);
+                } catch (IOException e2) {
+                    logger.error("Failed to delete polygon file: {}", polygonFilePath);
+                }
+                throw new RuntimeException("Failed to create points", e);
             }
         }
         return indexPolygons;
     }
 
-    void createDirectory(String directoryPath) {
-        Path outputDirectory = Paths.get(directoryPath);
-        if (!Files.exists(outputDirectory)) {
-            if (!outputDirectory.toFile().mkdirs()) {
-                throw new RuntimeException("Failed to create output directory: " + outputDirectory.toAbsolutePath());
-            }
-        } else if (!Files.isDirectory(outputDirectory)) {
-            throw new RuntimeException("Output directory is not a directory: " + outputDirectory.toAbsolutePath());
-        }
+    File getOutputDirectory() {
+        return createDirectory(outputDirectoryName);
     }
 
+    private File createDirectory(String directoryPath) {
+        Path path = Paths.get(directoryPath);
+        if (!Files.exists(path)) {
+            if (!path.toFile().mkdirs()) {
+                throw new RuntimeException("Failed to create output directory: " + path.toAbsolutePath());
+            }
+        } else if (!Files.isDirectory(path)) {
+            throw new RuntimeException("Output directory is not a directory: " + path.toAbsolutePath());
+        }
+        return path.toFile();
+    }
 
-    private double[] createRandomLatLon() {
-        final double latitude = ThreadLocalRandom.current().nextDouble(minLat, maxLat);
-        final double longitude = ThreadLocalRandom.current().nextDouble(minLon, maxLon);
+    private double[] createRandomLatLon(Envelope boundingBox) {
+        return createRandomLatLon(boundingBox, null);
+    }
+
+    private double[] createRandomLatLon(Envelope boundingBox, Polygon polygon) {
+        double latitude, longitude;
+        do {
+            latitude = ThreadLocalRandom.current().nextDouble(boundingBox.getMinY(), boundingBox.getMaxY());
+            longitude = ThreadLocalRandom.current().nextDouble(boundingBox.getMinX(), boundingBox.getMaxY());
+        } while (polygon != null && !polygon.contains(gf.createPoint(new Coordinate(longitude, latitude))));
         return new double[]{latitude, longitude};
     }
 
-    double[][] createPolygon() {
-        final double latitude = ThreadLocalRandom.current().nextDouble(minLat, maxLat);
-        final double longitude = ThreadLocalRandom.current().nextDouble(minLon, maxLon);
-        return createPolygon(latitude, longitude);
+    double[][] createPolygon(Envelope boundingBox, Polygon polygon) {
+        final double[] latlon = createRandomLatLon(boundingBox, polygon);
+        return createPolygon(latlon[0], latlon[1]);
     }
 
-    double[][] createPolygon(double lat, double lon) {
+    private double[][] createPolygon(double lat, double lon) {
         return createPolygon((float) lat, (float) lon,
-                minVertices + random.nextInt(maxVertices - minVertices),
-                irregularity, spikiness, minRadius, maxRadius, lambda);
+                config.getMinVertices() + random.nextInt(config.getMaxVertices() - config.getMinVertices()),
+                config.getIrregularity(), config.getSpikiness(), config.getMinRadius(), config.getMaxRadius(), config.getLambda());
     }
 
     /**
@@ -258,6 +527,26 @@ public abstract class AbstractBenchmark {
         return points;
     }
 
+    Geometry convexHull(SimpleFeatureCollection fc) {
+        logger.info("Creating convex hull for feature collection...");
+        ArrayList<Geometry> geoms = new ArrayList<>();
+        try (ProgressBar pb = new ProgressBar("Features:", fc.size());
+             SimpleFeatureIterator it = fc.features()) {
+            if (it.hasNext()) {
+                pb.step();
+                geoms.add(((Geometry) it.next().getDefaultGeometry()).convexHull());
+                while (it.hasNext()) {
+                    pb.step();
+                    geoms.add(JTS.toGeometry(it.next().getBounds()));
+                    GeometryCollection geometryCollection = (GeometryCollection) gf.buildGeometry(geoms);
+                    geoms.clear();
+                    geoms.add(geometryCollection.union().convexHull());
+                }
+            }
+        }
+        return geoms.isEmpty() ? null : geoms.get(0);
+    }
+
     // Semi-axes of WGS-84 geoidal reference
     private static final double WGS84_a = 6378137.0; // Major semiaxis [metres]
     private static final double WGS84_b = 6356752.3; // Minor semiaxis [metres]
@@ -276,24 +565,23 @@ public abstract class AbstractBenchmark {
         return (x < min) ? min : min(x, max);
     }
 
-    protected void teardown() throws IOException {
+    protected void teardown() {
         System.out.format("%n%s: average number of candidates per successful query = %.0f, " +
                         "number of intersecting polygons found = %.0f/%d%n",
                 getClass().getSimpleName(),
                 candidateCounts.stream().mapToLong(x -> x).average().orElse(0),
                 nearestCounts.stream().mapToLong(x -> x).average().orElse(0),
-                numberOfQueryPoints);
+                config.getNumberOfQueryPoints());
 
         // write results
         String filename = "results" +
                 "-" + this.getClass().getSimpleName() +
-                "-" + numberOfIndexPolygons +
-                "-" + queryRadiusMetres +
+                "-" + configName +
                 ".csv";
         Path path = Paths.get(outputDirectoryName, filename);
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(path.toFile()))) {
-            for (Map.Entry<Integer, Double> result : results) {
-                writer.write(String.valueOf(result.getKey()));
+            for (Map.Entry<String, Double> result : results) {
+                writer.write(result.getKey());
                 writer.write('\t');
                 writer.write(String.valueOf(result.getValue()));
                 writer.newLine();
@@ -301,9 +589,27 @@ public abstract class AbstractBenchmark {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        candidateCounts.clear();
+        nearestCounts.clear();
+        results.clear();
     }
 
-    public static void main(String[] args) throws RunnerException, IOException {
+    private void showFeatures(SimpleFeatureSource featureSource) {
+        // Create a map content and add our shapefile to it
+        MapContent map = new MapContent();
+        map.setTitle("Quickstart");
+
+        Style style = SLD.createSimpleStyle(featureSource.getSchema());
+        Layer layer = new FeatureLayer(featureSource, style);
+        map.addLayer(layer);
+
+        // Now display the map
+        JMapFrame.showMap(map);
+    }
+
+
+
+    public static void main(String[] args) {
 //        LuceneBenchmark benchmark = new LuceneBenchmark();
 //        DrawPolygons drawPolygons = new DrawPolygons(benchmark.minLon, benchmark.maxLon, benchmark.minLat, benchmark.maxLat);
 //        List<double[][]> indexPolygons = benchmark.getIndexPolygons();
@@ -317,14 +623,15 @@ public abstract class AbstractBenchmark {
         Options opt = new OptionsBuilder()
 //                .addProfiler(GCProfiler.class)
                 .addProfiler(MaxMemoryProfiler.class)
-                .include(GeotoolsBenchmark.class.getSimpleName())
+//                .include(GeotoolsBenchmark.class.getSimpleName())
                 .include(LuceneBenchmark.class.getSimpleName())
-                .include(MongoDbBenchmark.class.getSimpleName())
+//                .include(MongoDbBenchmark.class.getSimpleName())
                 .build();
 
-        Collection<RunResult> runResults = new Runner(opt).run();
+        try {
+            Collection<RunResult> runResults = new Runner(opt).run();
 
-//        for (RunResult runResult : runResults) {
+            //        for (RunResult runResult : runResults) {
 //            for (BenchmarkResult benchmarkResult : runResult.getBenchmarkResults()) {
 //                Result primaryResult = benchmarkResult.getPrimaryResult();
 //                BenchmarkParams params = benchmarkResult.getParams();
@@ -335,5 +642,8 @@ public abstract class AbstractBenchmark {
 //                        primaryResult.getScoreUnit());
 //            }
 //        }
+        } catch (RunnerException e) {
+            logger.error("", e);
+        }
     }
 }
