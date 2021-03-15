@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+                           http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd">
+
+    <context:property-placeholder/>
+
+    <bean id="trialConfiguration" class="uk.ac.shef.wit.geo.benchmark.TrialConfiguration">
+<!--        <property name="shapeFile" value="/data/osm/gb/shp/wales/gis_osm_buildings_a_free_1.shp"/>-->
+<!--        <property name="typeName" value="gis_osm_buildings_a_free_1"/>-->
+
+        <property name="numberOfIndexPoints" value="100000"/>
+        <property name="numberOfQueryPoints" value="10000"/>
+
+        <property name="boundingBox" ref="ukBoundingBox"/>
+
+        <property name="minVertices" value="5"/>
+        <property name="maxVertices" value="20"/>
+        <property name="irregularity" value="1"/>
+        <property name="spikiness" value="0.5"/>
+        <property name="lambda" value="10"/>
+        <property name="minRadius" value="400"/>
+        <property name="maxRadius" value="4000"/>
+    </bean>
+
+    <bean id="ukBoundingBox" class="org.locationtech.jts.geom.Envelope">
+        <constructor-arg index="0" value="-2"/>
+        <constructor-arg index="1" value="2"/>
+        <constructor-arg index="2" value="50"/>
+        <constructor-arg index="3" value="56"/>
+    </bean>
+</beans>
+
