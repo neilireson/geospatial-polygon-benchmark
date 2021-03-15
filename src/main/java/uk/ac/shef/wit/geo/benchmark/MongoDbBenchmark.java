@@ -53,6 +53,8 @@ public class MongoDbBenchmark
     public static final int geoHashBits = 26;
     private final String fieldName = "location";
     private final MongoClient mongoClient;
+    MongoCollection<Document> collection;
+
     String collectionName = placesCollectionName + "_" + configName;
 
     public MongoDbBenchmark() {
@@ -81,7 +83,7 @@ public class MongoDbBenchmark
         } else {
             logger.info("Database currently has no collections");
         }
-        MongoCollection<Document> collection = db.getCollection(collectionName);
+        collection = db.getCollection(collectionName);
 
         Map.Entry<DataStore, SimpleFeatureCollection> dataStoreCollection = getIndexPolygons();
         DataStore dataStore = dataStoreCollection.getKey();
@@ -140,8 +142,6 @@ public class MongoDbBenchmark
     @Warmup(iterations = 0)
     @Measurement(iterations = 1)
     public void pointQuery() {
-        MongoDatabase db = mongoClient.getDatabase(placesDbName);
-        MongoCollection<Document> collection = db.getCollection(collectionName);
         long foundCount = 0;
         long intersectingCount = 0;
         for (double[] latlon : getQueryPoints()) {
@@ -171,8 +171,6 @@ public class MongoDbBenchmark
     @Warmup(iterations = 0)
     @Measurement(iterations = 1)
     public void polygonQuery() {
-        MongoDatabase db = mongoClient.getDatabase(placesDbName);
-        MongoCollection<Document> collection = db.getCollection(collectionName);
         long foundCount = 0;
         long intersectingCount = 0;
         for (double[][] latlons : getQueryPolygons()) {
