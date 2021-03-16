@@ -85,7 +85,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
     final ThreadLocal<GeometryJSON> geometryJSON = ThreadLocal.withInitial(() -> new GeometryJSON(decimalPrecision));
 
     //        @Param({"10000", "100000"})
-    final String configName = "england-buildings";
+    final String configName = "england-landuse";
     TrialConfiguration config;
 
     final List<Long> candidateCounts = new ArrayList<>();
@@ -624,7 +624,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
 //                .addProfiler(GCProfiler.class)
                 .addProfiler(MaxMemoryProfiler.class)
 //                .include(GeotoolsBenchmark.class.getSimpleName())
-//                .include(LuceneBenchmark.class.getSimpleName())
+                .include(LuceneBenchmark.class.getSimpleName())
                 .include(MongoDbBenchmark.class.getSimpleName())
                 .build();
 

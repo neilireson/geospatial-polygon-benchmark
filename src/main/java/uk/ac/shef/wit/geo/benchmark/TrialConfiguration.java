@@ -12,6 +12,7 @@ public class TrialConfiguration {
     private String typeName = "gis_osm_buildings_a_free_1";
 
     private Integer numberOfIndexPoints = null;
+    private long missingDataThreshold = 0;
     private int numberOfQueryPoints = 10000;
 
     // the boundingBox used to calculate the location of the random points and polygons
@@ -59,6 +60,14 @@ public class TrialConfiguration {
 
     public void setNumberOfIndexPoints(Integer numberOfIndexPoints) {
         this.numberOfIndexPoints = numberOfIndexPoints;
+    }
+
+    public long getMissingDataThreshold() {
+        return missingDataThreshold;
+    }
+
+    public void setMissingDataThreshold(long missingDataThreshold) {
+        this.missingDataThreshold = missingDataThreshold;
     }
 
     public int getNumberOfQueryPoints() {

@@ -40,6 +40,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import static java.lang.Math.abs;
+
 @State(Scope.Thread)
 public class MongoDbBenchmark
         extends AbstractBenchmark {
@@ -93,10 +95,17 @@ public class MongoDbBenchmark
             long count = collection.countDocuments();
             if (count == 0) {
                 logger.error("Collection {} is empty", collectionName);
-            } else if (config.getNumberOfIndexPoints() != null && config.getNumberOfIndexPoints() != count) {
-                logger.error("Collection contains incorrect number of points. Expected {}, found {}",
-                        config.getNumberOfIndexPoints(), collection.countDocuments());
-                collection.deleteMany(new Document());
+            } else if (polygons.size() != count) {
+                logger.error("Collection contains incorrect number of documents. Expected {}, found {}",
+                        polygons.size(), count);
+                if (abs(polygons.size() - count) <= config.getMissingDataThreshold()) {
+                    logger.info("Missing number of documents is within acceptable limit, {} <= {}",
+                            abs(polygons.size() - count), config.getMissingDataThreshold());
+                    return;
+                } else {
+                    logger.info("Deleting all documents in collection {}...", collectionName);
+                    collection.deleteMany(new Document());
+                }
             } else {
                 logger.info("Collection {} contains {} documents", collectionName, collection.countDocuments());
                 return;
@@ -124,7 +133,6 @@ public class MongoDbBenchmark
                     progressBar.step();
                 } catch (Exception e) {
                     logger.error("Failed to add feature: " + feature);
-                    throw e;
                 }
             }
         } finally {
