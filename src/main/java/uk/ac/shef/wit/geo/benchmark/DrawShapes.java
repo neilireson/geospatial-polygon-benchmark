@@ -1,12 +1,8 @@
 package uk.ac.shef.wit.geo.benchmark;
 
-import org.geotools.geometry.jts.JTSFactoryFinder;
 import org.geotools.geometry.jts.WKTReader2;
-import org.geotools.util.factory.FactoryFinder;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.geom.GeometryCollection;
-import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.hull.ConcaveHull;
@@ -15,16 +11,13 @@ import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.awt.Color;
-import java.awt.Dimension;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
+import java.awt.*;
 import java.awt.geom.Path2D;
 import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.swing.JFrame;
 import javax.swing.JPanel;
@@ -35,7 +28,7 @@ public class DrawShapes extends JPanel {
     private static final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
     private static final ThreadLocal<WKTReader2> wktReader = ThreadLocal.withInitial(WKTReader2::new);
 
-    private final Map<Color, List<Path2D.Double>> polygonList = new HashMap<>();
+    private final Map<Color, List<Path2D.Double>> polygonList = new ConcurrentHashMap<>();
     private double minX;
     private double minY;
     private double rangeX;
@@ -141,7 +134,9 @@ public class DrawShapes extends JPanel {
         this.setOpaque(true);
         this.setBackground(Color.WHITE);
 
+        int lineWidth = polygonList.size();
         for (Map.Entry<Color, List<Path2D.Double>> entry : polygonList.entrySet()) {
+            g.setStroke(new BasicStroke(lineWidth--));
             Color color = entry.getKey();
             if (Color.WHITE.equals(color)) {
                 throw new IllegalArgumentException("Polygon color " + color + " is same as background");
