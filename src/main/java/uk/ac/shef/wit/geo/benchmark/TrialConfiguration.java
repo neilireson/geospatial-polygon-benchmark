@@ -8,12 +8,42 @@ import java.net.URL;
 
 public class TrialConfiguration {
 
+    public enum SimplificationType {
+        BoundingBox,
+        ConvexHull,
+        ConcaveHull,
+        DouglasPeucker,
+        TopologyPreserving,
+        None;
+    }
+
     private String shapeFile = "/data/osm/gb/shp/wales/gis_osm_buildings_a_free_1.shp";
     private String typeName = "gis_osm_buildings_a_free_1";
 
-    private Integer numberOfIndexPoints = null;
+    // The maximum difference between the number of features in the shapefile and index.
+    // Used for cases where the shapefile contains geometries deemed invalid by the indexes to prevent re-indexing.
     private long missingDataThreshold = 0;
+
+    // Need to specify either shapefile or number of polygons to generate and index
+    private Integer numberOfIndexPolygons = null;
     private int numberOfQueryPoints = 10000;
+    private int numberOfQueryPolygons = 10000;
+
+    // Simplification
+    private boolean removeHoles = false;
+    private SimplificationType simplificationType = SimplificationType.None;
+    /**
+     * The (non-negative) distance tolerance for the simplification.
+     * All vertices in the simplified geometry will be within this distance of the original geometry.
+     * Therefore if the units are latitude longitude degrees the distances are approximately
+     * 1°       = 111 km  (or 60 nautical miles)
+     * 0.1°     = 11.1 km
+     * 0.01°    = 1.11 km
+     * 0.001°   = 111 m
+     * 0.0001°  = 11.1 m
+     * 0.00001° = 1.11 m
+     */
+    private Double SimplificationThreshold = 0.0;
 
     // the boundingBox used to calculate the location of the random points and polygons
     // if the index is created from a shapefile and the boundingBox is null:
@@ -54,12 +84,12 @@ public class TrialConfiguration {
         this.typeName = typeName;
     }
 
-    public Integer getNumberOfIndexPoints() {
-        return numberOfIndexPoints;
+    public Integer getNumberOfIndexPolygons() {
+        return numberOfIndexPolygons;
     }
 
-    public void setNumberOfIndexPoints(Integer numberOfIndexPoints) {
-        this.numberOfIndexPoints = numberOfIndexPoints;
+    public void setNumberOfIndexPolygons(Integer numberOfIndexPolygons) {
+        this.numberOfIndexPolygons = numberOfIndexPolygons;
     }
 
     public long getMissingDataThreshold() {
@@ -76,6 +106,14 @@ public class TrialConfiguration {
 
     public void setNumberOfQueryPoints(int numberOfQueryPoints) {
         this.numberOfQueryPoints = numberOfQueryPoints;
+    }
+
+    public int getNumberOfQueryPolygons() {
+        return numberOfQueryPolygons;
+    }
+
+    public void setNumberOfQueryPolygons(int numberOfIndexPolygons) {
+        this.numberOfIndexPolygons = numberOfIndexPolygons;
     }
 
     public Envelope getBoundingBox() {
@@ -140,6 +178,30 @@ public class TrialConfiguration {
 
     public void setMaxRadius(float maxRadius) {
         this.maxRadius = maxRadius;
+    }
+
+    public boolean getRemoveHoles() {
+        return removeHoles;
+    }
+
+    public void setRemoveHoles(boolean removeHoles) {
+        this.removeHoles = removeHoles;
+    }
+
+    public SimplificationType getSimplificationType() {
+        return simplificationType;
+    }
+
+    public void setSimplificationType(SimplificationType simplificationType) {
+        this.simplificationType = simplificationType;
+    }
+
+    public Double getSimplificationThreshold() {
+        return SimplificationThreshold;
+    }
+
+    public void setSimplificationThreshold(Double simplificationThreshold) {
+        SimplificationThreshold = simplificationThreshold;
     }
 
     public static TrialConfiguration create() {

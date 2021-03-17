@@ -55,7 +55,9 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
+import static java.lang.Math.abs;
 import static org.apache.lucene.search.ScoreMode.COMPLETE_NO_SCORES;
 
 @State(Scope.Thread)
@@ -112,16 +114,48 @@ public class LuceneBenchmark
 
         try {
             Path indexPath = luceneType.getIndexPath(getOutputDirectory(), configName);
-            if (indexPath== null || !Files.exists(indexPath)) {
+
+            if (indexPath != null && Files.exists(indexPath)) {
+                logger.info("Reading Lucene index...");
+                Directory directory = luceneType.getDirectory(getOutputDirectory(), configName);
+                int count;
+                try(final IndexReader indexReader = DirectoryReader.open(directory)) {
+                    count = indexReader.numDocs();
+                }
+
+                if (count == 0) {
+                    logger.error("Index is empty");
+                    //FIXME create index
+                } else if (polygons.size() != count) {
+                    logger.error("Index contains incorrect number of documents. Expected {}, found {}",
+                            polygons.size(), count);
+                    if (abs(polygons.size() - count) <= config.getMissingDataThreshold()) {
+                        logger.info("Missing number of documents is within acceptable limit, {} <= {}",
+                                abs(polygons.size() - count), config.getMissingDataThreshold());
+                    } else {
+                        throw new IOException("Delete index: "+ indexPath);
+                    }
+                    //FIXME create index
+                } else {
+                    logger.info("Index {} contains {} documents", indexPath, count);
+                }
+            }
+
+            if (indexPath == null || !Files.exists(indexPath)) {
                 try (Directory directory = luceneType.getDirectory(getOutputDirectory(), configName);
                      IndexWriter indexWriter = new IndexWriter(directory, new IndexWriterConfig())) {
 
                     logger.info("Indexing features...");
                     try (ProgressBar progressBar = new ProgressBar("Features:", polygons.size());
                          SimpleFeatureIterator it = polygons.features()) {
+                        Function<SimpleFeature, SimpleFeature> simplificationFunction =
+                                getSimplificationFunction(polygons);
                         int id = 0;
                         while (it.hasNext()) {
                             SimpleFeature feature = it.next();
+                            if (simplificationFunction != null) {
+                                feature = simplificationFunction.apply(feature);
+                            }
                             Geometry featureGeometry = (Geometry) feature.getDefaultGeometry();
                             try {
                                 Document doc = new Document();
@@ -130,7 +164,6 @@ public class LuceneBenchmark
                                 indexWriter.addDocument(doc);
                             } catch (Exception e) {
                                 logger.error("Failed to add polygon:{}", featureGeometry, e);
-                                throw e;
                             } finally {
                                 progressBar.step();
                             }

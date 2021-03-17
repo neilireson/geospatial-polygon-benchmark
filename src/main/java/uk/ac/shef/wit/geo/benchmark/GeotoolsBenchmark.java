@@ -32,12 +32,12 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.AbstractMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 @State(Scope.Thread)
 public class GeotoolsBenchmark
@@ -54,7 +54,17 @@ public class GeotoolsBenchmark
 
         logger.info("Creating spatial index");
         index = new SpatialIndexFeatureCollection(polygons.getSchema());
-        index.addAll(polygons);
+        Function<SimpleFeature,SimpleFeature> simplificationFunction =
+                getSimplificationFunction(polygons);
+        if (simplificationFunction == null) {
+            index.addAll(polygons);
+        } else {
+            SimpleFeatureIterator it = polygons.features();
+            while (it.hasNext()) {
+                SimpleFeature feature = simplificationFunction.apply(it.next());
+                index.add(feature);
+            }
+        }
 
         dataStore.dispose();
     }
@@ -183,7 +193,7 @@ public class GeotoolsBenchmark
 //            System.out.println(factory.getDisplayName());
 //        }
 
-        try (GeotoolsBenchmark benchmark = new GeotoolsBenchmark()){
+        try (GeotoolsBenchmark benchmark = new GeotoolsBenchmark()) {
             benchmark.setup();
             benchmark.pointIntersectsQuery();
             benchmark.teardown();

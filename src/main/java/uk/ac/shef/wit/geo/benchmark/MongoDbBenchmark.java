@@ -39,6 +39,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 import static java.lang.Math.abs;
 
@@ -107,7 +108,7 @@ public class MongoDbBenchmark
                     collection.deleteMany(new Document());
                 }
             } else {
-                logger.info("Collection {} contains {} documents", collectionName, collection.countDocuments());
+                logger.info("Collection {} contains {} documents", collectionName, count);
                 return;
             }
         }
@@ -119,9 +120,14 @@ public class MongoDbBenchmark
         logger.info("Indexing polygons...");
         try (ProgressBar progressBar = new ProgressBar("Features:", polygons.size());
              SimpleFeatureIterator it = polygons.features()) {
+            Function<SimpleFeature, SimpleFeature> simplificationFunction =
+                    getSimplificationFunction(polygons);
             int id = 0;
             while (it.hasNext()) {
                 SimpleFeature feature = it.next();
+                if (simplificationFunction != null) {
+                    feature = simplificationFunction.apply(feature);
+                }
                 Geometry geometry = (Geometry) feature.getDefaultGeometry();
                 try {
                     Document doc = new Document();

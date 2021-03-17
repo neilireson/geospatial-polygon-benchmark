@@ -8,11 +8,18 @@
     <context:property-placeholder/>
 
     <bean id="trialConfiguration" class="uk.ac.shef.wit.geo.benchmark.TrialConfiguration">
-<!--        <property name="shapeFile" value="/data/osm/gb/shp/wales/gis_osm_buildings_a_free_1.shp"/>-->
-<!--        <property name="typeName" value="gis_osm_buildings_a_free_1"/>-->
+        <!--        <property name="shapeFile" value="/data/osm/gb/shp/wales/gis_osm_buildings_a_free_1.shp"/>-->
+        <!--        <property name="typeName" value="gis_osm_buildings_a_free_1"/>-->
+        <property name="missingDataThreshold" value="1"/>
 
-        <property name="numberOfIndexPoints" value="100000"/>
+        <property name="numberOfIndexPolygons" value="100000"/>
+
+        <property name="removeHoles" value="false"/>
+        <property name="simplificationType" value="None"/>
+        <property name="simplificationThreshold" value="0"/>
+
         <property name="numberOfQueryPoints" value="10000"/>
+        <property name="numberOfQueryPolygons" value="10000"/>
 
         <property name="boundingBox" ref="ukBoundingBox"/>
 

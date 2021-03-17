@@ -30,6 +30,9 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
+import org.locationtech.jts.hull.ConcaveHull;
+import org.locationtech.jts.simplify.DouglasPeuckerSimplifier;
+import org.locationtech.jts.simplify.TopologyPreservingSimplifier;
 import org.opengis.feature.simple.SimpleFeature;
 import org.opengis.feature.simple.SimpleFeatureType;
 import org.openjdk.jmh.annotations.Scope;
@@ -65,6 +68,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -135,6 +139,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
         if (config.getShapeFile() != null) {
             Path shapefile = Paths.get(config.getShapeFile());
             if (Files.exists(shapefile)) {
+                logger.info("Reading from shapefile: {}", shapefile);
                 try {
                     dataStore = FileDataStoreFinder.getDataStore(shapefile.toFile());
                     SimpleFeatureSource featureSource = dataStore.getFeatureSource(config.getTypeName());
@@ -150,6 +155,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
             }
         } else if (Files.exists(generatedShapefile)) {
             try {
+                logger.info("Reading from generated shapefile: {}", generatedShapefile);
                 dataStore = FileDataStoreFinder.getDataStore(generatedShapefile.toFile());
                 SimpleFeatureSource featureSource = dataStore.getFeatureSource(fileNamePrefix);
                 polygons = featureSource.getFeatures();
@@ -160,12 +166,15 @@ public abstract class AbstractBenchmark implements AutoCloseable {
                 throw new RuntimeException("Failed to read features from shapefile: " + generatedShapefile, e);
             }
         } else {
+            if (config.getNumberOfIndexPolygons() == null) {
+                throw new NullPointerException("Configuration file specifies neither shapefile nor number of indexed polygons");
+            }
             List<double[][]> indexPolygons = new ArrayList<>();
-            for (int i = 0; i < config.getNumberOfIndexPoints(); i++) {
+            for (int i = 0; i < config.getNumberOfIndexPolygons(); i++) {
                 indexPolygons.add(createPolygon(config.getBoundingBox(), null));
             }
             ArrayList<SimpleFeature> features = new ArrayList<>();
-            try (ProgressBar progressBar = new ProgressBar("Features:", config.getNumberOfIndexPoints())) {
+            try (ProgressBar progressBar = new ProgressBar("Features:", config.getNumberOfIndexPolygons())) {
                 for (double[][] latlons : indexPolygons) {
                     progressBar.step();
 
@@ -297,6 +306,60 @@ public abstract class AbstractBenchmark implements AutoCloseable {
         }
     }
 
+    Function<SimpleFeature, SimpleFeature> getSimplificationFunction(SimpleFeatureCollection collection) {
+        switch (config.getSimplificationType()) {
+            case DouglasPeucker:
+            case TopologyPreserving:
+                if (config.getSimplificationThreshold() <= 0) {
+                    logger.error("Simplification type set to {} but threshold is {}, which is effectively a NoOp. " +
+                                    "Setting type to {}",
+                            config.getSimplificationType(), config.getSimplificationThreshold(),
+                            TrialConfiguration.SimplificationType.None);
+                    config.setSimplificationType(TrialConfiguration.SimplificationType.None);
+                }
+        }
+
+        if (!config.getRemoveHoles() &&
+                (config.getSimplificationType() == null ||
+                        config.getSimplificationType() == TrialConfiguration.SimplificationType.None)) {
+            return null;
+        }
+
+        final SimpleFeatureBuilder fb = new SimpleFeatureBuilder(collection.getSchema());
+        return feature -> {
+            for (Object attribute : feature.getAttributes()) {
+                if (attribute instanceof Geometry) {
+                    Geometry geometry = (Geometry) attribute;
+                    if (config.getRemoveHoles()) {
+                        geometry = geometry.getBoundary();
+                    }
+                    switch (config.getSimplificationType()) {
+                        case BoundingBox:
+                            geometry = geometry.getEnvelope();
+                            break;
+                        case ConvexHull:
+                            geometry = geometry.convexHull();
+                            break;
+                        case ConcaveHull:
+                            geometry = ConcaveHull.compute(geometry);
+                            break;
+                        case DouglasPeucker:
+                            geometry = DouglasPeuckerSimplifier.simplify(geometry,
+                                    config.getSimplificationThreshold());
+                            break;
+                        case TopologyPreserving:
+                            geometry = TopologyPreservingSimplifier.simplify(geometry,
+                                    config.getSimplificationThreshold());
+                            break;
+                    }
+                    attribute = geometry;
+                }
+                fb.add(attribute);
+            }
+            return fb.buildFeature(feature.getID());
+        };
+    }
+
 
     List<double[]> getQueryPoints() {
         return getQueryPoints(config.getBoundingBox(), null);
@@ -311,7 +374,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
     }
 
     List<double[][]> getQueryPolygons(Envelope boundingBox, Polygon polygon) {
-        return getPolygons(getQueryPolygonsFilePath(), config.getNumberOfQueryPoints(),
+        return getPolygons(getQueryPolygonsFilePath(), config.getNumberOfQueryPolygons(),
                 boundingBox, polygon);
     }
 
@@ -323,7 +386,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
 
     private Path getQueryPolygonsFilePath() {
         createDirectory(outputDirectoryName);
-        String filename = "benchmark-query-polygons-" + configName + "-" + config.getNumberOfQueryPoints() + ".csv.gz";
+        String filename = "benchmark-query-polygons-" + configName + "-" + config.getNumberOfQueryPolygons() + ".csv.gz";
         return Paths.get(outputDirectoryName, filename);
     }
 
@@ -571,7 +634,7 @@ public abstract class AbstractBenchmark implements AutoCloseable {
                 getClass().getSimpleName(),
                 candidateCounts.stream().mapToLong(x -> x).average().orElse(0),
                 nearestCounts.stream().mapToLong(x -> x).average().orElse(0),
-                config.getNumberOfQueryPoints());
+                results.size());
 
         // write results
         String filename = "results" +
@@ -606,7 +669,6 @@ public abstract class AbstractBenchmark implements AutoCloseable {
         // Now display the map
         JMapFrame.showMap(map);
     }
-
 
 
     public static void main(String[] args) {
