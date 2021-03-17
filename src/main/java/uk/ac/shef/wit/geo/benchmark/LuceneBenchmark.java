@@ -113,19 +113,19 @@ public class LuceneBenchmark
         SimpleFeatureCollection polygons = dataStoreCollection.getValue();
 
         try {
+            boolean createIndex = false;
             Path indexPath = luceneType.getIndexPath(getOutputDirectory(), configName);
-
             if (indexPath != null && Files.exists(indexPath)) {
                 logger.info("Reading Lucene index...");
                 Directory directory = luceneType.getDirectory(getOutputDirectory(), configName);
                 int count;
-                try(final IndexReader indexReader = DirectoryReader.open(directory)) {
+                try (final IndexReader indexReader = DirectoryReader.open(directory)) {
                     count = indexReader.numDocs();
                 }
 
                 if (count == 0) {
                     logger.error("Index is empty");
-                    //FIXME create index
+                    createIndex = true;
                 } else if (polygons.size() != count) {
                     logger.error("Index contains incorrect number of documents. Expected {}, found {}",
                             polygons.size(), count);
@@ -133,17 +133,21 @@ public class LuceneBenchmark
                         logger.info("Missing number of documents is within acceptable limit, {} <= {}",
                                 abs(polygons.size() - count), config.getMissingDataThreshold());
                     } else {
-                        throw new IOException("Delete index: "+ indexPath);
+                        createIndex = true;
                     }
-                    //FIXME create index
                 } else {
                     logger.info("Index {} contains {} documents", indexPath, count);
                 }
             }
 
-            if (indexPath == null || !Files.exists(indexPath)) {
+            IndexWriterConfig indexWriterConfig = new IndexWriterConfig();
+            if (createIndex || indexPath == null || !Files.exists(indexPath)) {
+                if (createIndex) {
+                    // this will delete all documents currently indexed
+                    indexWriterConfig.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
+                }
                 try (Directory directory = luceneType.getDirectory(getOutputDirectory(), configName);
-                     IndexWriter indexWriter = new IndexWriter(directory, new IndexWriterConfig())) {
+                     IndexWriter indexWriter = new IndexWriter(directory, indexWriterConfig)) {
 
                     logger.info("Indexing features...");
                     try (ProgressBar progressBar = new ProgressBar("Features:", polygons.size());

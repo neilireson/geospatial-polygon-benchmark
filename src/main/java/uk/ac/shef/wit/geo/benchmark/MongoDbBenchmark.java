@@ -104,8 +104,9 @@ public class MongoDbBenchmark
                             abs(polygons.size() - count), config.getMissingDataThreshold());
                     return;
                 } else {
-                    logger.info("Deleting all documents in collection {}...", collectionName);
-                    collection.deleteMany(new Document());
+                    logger.info("Deleting all documents in collection {}", collectionName);
+                    collection.drop();
+                    collection = db.getCollection(collectionName);
                 }
             } else {
                 logger.info("Collection {} contains {} documents", collectionName, count);
