@@ -127,10 +127,10 @@ public class DrawShapes extends JPanel {
     }
 
     @Override
-    public void paintComponent(Graphics g1) {
-        super.paintComponent(g1);
+    public void paintComponent(Graphics graphics) {
+        super.paintComponent(graphics);
 
-        Graphics2D g = (Graphics2D) g1;
+        Graphics2D g = (Graphics2D) graphics;
         this.setOpaque(true);
         this.setBackground(Color.WHITE);
 

@@ -35,13 +35,16 @@ public class TrialConfiguration {
     /**
      * The (non-negative) distance tolerance for the simplification.
      * All vertices in the simplified geometry will be within this distance of the original geometry.
-     * Therefore if the units are latitude longitude degrees the distances are approximately
-     * 1°       = 111 km  (or 60 nautical miles)
+     * Therefore if the units are latitude/longitude degrees at the Equator the distances are approximately:
+     * 1°       = 111 km  (60 nautical miles)
      * 0.1°     = 11.1 km
      * 0.01°    = 1.11 km
      * 0.001°   = 111 m
      * 0.0001°  = 11.1 m
      * 0.00001° = 1.11 m
+     * As latitude moves away from the Equator the longitude distance values will decrease:
+     * degrees      equator     lat=23N/S     lat=45N/S    lat=67N/S    lat=90N/S
+     * 1°           111 km      102 km        78 km        43 km        0 km
      */
     private Double SimplificationThreshold = 0.0;
 
