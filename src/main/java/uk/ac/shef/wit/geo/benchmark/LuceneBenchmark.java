@@ -14,6 +14,7 @@ import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
@@ -76,7 +77,6 @@ public class LuceneBenchmark
                 case ram:
                     return null;
                 case mmap:
-                    return Paths.get(outputDirectory.getAbsolutePath(), "lucene-polygons-index-" + indexSource);
                 case directory:
                     return Paths.get(outputDirectory.getAbsolutePath(), "lucene-polygons-index-" + indexSource);
                 default:
@@ -359,20 +359,9 @@ public class LuceneBenchmark
         indexSearcher.getIndexReader().close();
     }
 
-    public static void main(String[] args) {
-        try (LuceneBenchmark benchmark = new LuceneBenchmark()) {
-            benchmark.setup();
-            benchmark.pointIntersectsQuery();
-            benchmark.teardown();
-            benchmark.polygonIntersectsQuery();
-            benchmark.teardown();
-        } catch (IOException e) {
-            logger.error("", e);
-        }
-    }
+    public static class TotalHitCollector extends SimpleCollector {
 
-    private static class TotalHitCollector extends SimpleCollector {
-
+        private int base;
         private final List<Integer> docs = new ArrayList<>();
 
         public int getTotalHits() {
@@ -389,12 +378,32 @@ public class LuceneBenchmark
 
         @Override
         public void collect(int doc) {
+            doc += this.base;
             docs.add(doc);
         }
 
         @Override
+        protected void doSetNextReader(LeafReaderContext context) {
+            this.base = context.docBase;
+        }
+
+        @Override
         public ScoreMode scoreMode() {
-            return COMPLETE_NO_SCORES;
+            return ScoreMode.COMPLETE_NO_SCORES;
+        }
+    }
+
+    
+
+    public static void main(String[] args) {
+        try (LuceneBenchmark benchmark = new LuceneBenchmark()) {
+            benchmark.setup();
+            benchmark.pointIntersectsQuery();
+            benchmark.teardown();
+            benchmark.polygonIntersectsQuery();
+            benchmark.teardown();
+        } catch (IOException e) {
+            logger.error("", e);
         }
     }
 }
