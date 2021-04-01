@@ -1,4 +1,4 @@
-package uk.ac.shef.wit.geo.benchmark;
+package uk.ac.shef.wit.geo;
 
 import org.geotools.geometry.jts.WKTReader2;
 import org.locationtech.jts.geom.Coordinate;

@@ -73,6 +73,8 @@ import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
+import uk.ac.shef.wit.geo.DrawShapes;
+
 import static java.lang.Math.*;
 
 @State(Scope.Benchmark)
