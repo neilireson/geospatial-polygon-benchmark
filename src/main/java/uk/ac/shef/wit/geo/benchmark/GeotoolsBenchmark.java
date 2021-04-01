@@ -75,43 +75,18 @@ public class GeotoolsBenchmark
     @Fork(value = 1)
     @Warmup(iterations = 0)
     @Measurement(iterations = 1)
-    public void pointIntersectsQuery() throws TransformException {
-
-        GeodeticCalculator gc = new GeodeticCalculator(DefaultGeographicCRS.WGS84);
-
+    public void pointIntersectsQuery() {
         long candidateCount = 0;
         long nearestCount = 0;
         List<double[]> queryPoints = getQueryPoints();
         for (double[] latlon : queryPoints) {
-            SimpleFeature nearestFeature = null;
-            double nearestDistance = Double.POSITIVE_INFINITY;
             Coordinate coord = new Coordinate(latlon[1], latlon[0]);
             Point point = gf.createPoint(coord);
             // get all features that are within maxSearchDistance of the query
-            SimpleFeatureCollection candidates = getCandidateFeatures(point);
+            SimpleFeatureCollection candidates = getIntersectingFeatures(point);
             if (!candidates.isEmpty()) {
                 candidateCount += candidates.size();
                 nearestCount++;
-                // iterate through the candidates
-                try (SimpleFeatureIterator itr = candidates.features()) {
-                    while (itr.hasNext()) {
-                        SimpleFeature feature = itr.next();
-                        Geometry featureGeometry = (Geometry) feature.getDefaultGeometry();
-                        double distance = DistanceOp.distance(point, featureGeometry);
-                        if (nearestDistance > distance) {
-                            nearestDistance = distance;
-                            nearestFeature = feature;
-                        }
-                    }
-                }
-            }
-            if (nearestFeature != null) {
-                gc.setStartingPosition(JTS.toDirectPosition(coord, DefaultGeographicCRS.WGS84));
-                gc.setDestinationPosition(JTS.toDirectPosition(((Geometry) nearestFeature.getDefaultGeometry()).getCoordinate(), DefaultGeographicCRS.WGS84));
-                double distance = gc.getOrthodromicDistance();
-                results.add(new AbstractMap.SimpleImmutableEntry<>(nearestFeature.getID(), distance));
-            } else {
-                results.add(new AbstractMap.SimpleImmutableEntry<>("0", -1.0));
             }
         }
 
@@ -143,7 +118,7 @@ public class GeotoolsBenchmark
             Polygon polygon = gf.createPolygon(coords);
 
             // get all features that are within maxSearchDistance of the query
-            SimpleFeatureCollection candidates = getCandidateFeatures(polygon);
+            SimpleFeatureCollection candidates = getIntersectingFeatures(polygon);
             if (!candidates.isEmpty()) {
                 candidateCount += candidates.size();
                 nearestCount++;
@@ -181,9 +156,13 @@ public class GeotoolsBenchmark
 
     private static final FilterFactory2 ff = CommonFactoryFinder.getFilterFactory2();
 
-    private SimpleFeatureCollection getCandidateFeatures(Geometry geometry) {
+    private SimpleFeatureCollection getIntersectingFeatures(Geometry geometry) {
         SimpleFeatureType schema = index.getSchema();
         Filter filter = ff.intersects(ff.property(schema.getGeometryDescriptor().getName()), ff.literal(geometry));
+        return getFeatures(filter);
+    }
+
+    private SimpleFeatureCollection getFeatures(Filter filter) {
         return index.subCollection(filter);
     }
 
