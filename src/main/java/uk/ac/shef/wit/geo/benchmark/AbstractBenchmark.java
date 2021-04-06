@@ -686,10 +686,10 @@ public abstract class AbstractBenchmark implements AutoCloseable {
 
         Options opt = new OptionsBuilder()
 //                .addProfiler(GCProfiler.class)
-                .addProfiler(MaxMemoryProfiler.class)
+//                .addProfiler(MaxMemoryProfiler.class)
 //                .include(GeotoolsBenchmark.class.getSimpleName())
                 .include(LuceneBenchmark.class.getSimpleName())
-                .include(MongoDbBenchmark.class.getSimpleName())
+//                .include(MongoDbBenchmark.class.getSimpleName())
                 .build();
 
         try {

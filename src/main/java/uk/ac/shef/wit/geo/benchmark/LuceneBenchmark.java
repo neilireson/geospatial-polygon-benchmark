@@ -59,7 +59,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static java.lang.Math.abs;
-import static org.apache.lucene.search.ScoreMode.COMPLETE_NO_SCORES;
 
 @State(Scope.Thread)
 public class LuceneBenchmark
@@ -219,7 +218,8 @@ public class LuceneBenchmark
         long nearestCount = 0;
         for (double[] latlon : getQueryPoints()) {
             Point point = new Point(latlon[0], latlon[1]);
-            long totalHits = query(point);
+            // Note that INTERSECTS and CONTAINS produce identical results (Lucene 8.8.2)
+            long totalHits = query(point, ShapeField.QueryRelation.CONTAINS);
             if (totalHits > 0) {
                 candidateCount += totalHits;
                 nearestCount++;
@@ -242,7 +242,7 @@ public class LuceneBenchmark
         long nearestCount = 0;
         for (double[][] latlons : getQueryPolygons()) {
             Polygon polygon = getPolygon(latlons);
-            long totalHits = query(polygon);
+            long totalHits = query(polygon, ShapeField.QueryRelation.INTERSECTS);
             if (totalHits > 0) {
                 candidateCount += totalHits;
                 nearestCount++;
@@ -334,11 +334,11 @@ public class LuceneBenchmark
         return new double[][]{lats, lons};
     }
 
-    private long query(LatLonGeometry geometry)
+    private long query(LatLonGeometry geometry, ShapeField.QueryRelation relation)
             throws IOException {
         String id = "0";
         float distance = -1;
-        Query query = LatLonShape.newGeometryQuery(fieldName, ShapeField.QueryRelation.INTERSECTS, geometry);
+        Query query = LatLonShape.newGeometryQuery(fieldName, relation, geometry);
         TotalHitCollector collector = new TotalHitCollector();
         indexSearcher.search(query, collector);
         if (collector.getTotalHits() != 0) {
