@@ -37,15 +37,17 @@
         <maven-source-plugin.version>3.2.1</maven-source-plugin.version>
         <maven-surefire-plugin.version>3.0.0-M5</maven-surefire-plugin.version>
 
-        <geotools.version>24.2</geotools.version>
-        <jmh.version>1.28</jmh.version>
+        <geotools.version>25.0</geotools.version>
+        <jmh.version>1.29</jmh.version>
         <jts.version>1.18.1</jts.version>
-        <lucene.version>8.8.1</lucene.version>
-        <mongodb.version>3.12.7</mongodb.version>
+        <lucene.version>8.8.2</lucene.version>
+        <mongodb.version>3.12.8</mongodb.version>
+        <postgis.version>2.5.0</postgis.version>
+        <postgresql.version>42.2.19</postgresql.version>
         <progressbar.version>0.9.1</progressbar.version>
         <slf4j.version>1.7.30</slf4j.version>
         <slf4j.binding>slf4j-jdk14</slf4j.binding>
-        <springframework.version>5.3.2</springframework.version>
+        <springframework.version>5.3.6</springframework.version>
 
         <uberjar.name>benchmarks</uberjar.name>
     </properties>
@@ -60,11 +62,6 @@
             <groupId>org.slf4j</groupId>
             <artifactId>${slf4j.binding}</artifactId>
             <version>${slf4j.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.locationtech.jts</groupId>
-            <artifactId>jts-lab</artifactId>
-            <version>${jts.version}</version>
         </dependency>
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
@@ -121,6 +118,11 @@
             <groupId>org.mongodb</groupId>
             <artifactId>mongo-java-driver</artifactId>
             <version>${mongodb.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>net.postgis</groupId>
+            <artifactId>postgis-jdbc</artifactId>
+            <version>${postgis.version}</version>
         </dependency>
         <dependency>
             <groupId>me.tongfei</groupId>

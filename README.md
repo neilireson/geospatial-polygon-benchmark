@@ -17,3 +17,13 @@ The benchmarks test both point and polygon intersection and vary
 * Number of indexed polygons
 
 ### Results
+
+Benchmark                                      Mode      Score   Error   Units
+GeotoolsBenchmark.pointIntersectsQuery        thrpt     12.849           ops/s
+GeotoolsBenchmark.polygonIntersectsQuery      thrpt      0.073           ops/s
+LuceneBenchmark.pointIntersectsQuery          thrpt      0.073           ops/s
+LuceneBenchmark.polygonIntersectsQuery        thrpt      0.085           ops/s
+MongoDbBenchmark.pointQuery                   thrpt      0.088           ops/s
+MongoDbBenchmark.polygonQuery                 thrpt      0.030           ops/s
+PostgisBenchmark.pointQuery                   thrpt      0.090           ops/s
+PostgisBenchmark.polygonQuery                 thrpt      0.072           ops/s
