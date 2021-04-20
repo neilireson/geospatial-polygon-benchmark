@@ -155,7 +155,7 @@ public class MongoDbBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 3)
     public void pointQuery() {
         long foundCount = 0;
         long intersectingCount = 0;
@@ -184,7 +184,7 @@ public class MongoDbBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 3)
     public void polygonQuery() {
         long foundCount = 0;
         long intersectingCount = 0;

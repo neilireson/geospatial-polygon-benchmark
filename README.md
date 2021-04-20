@@ -12,18 +12,22 @@ Currently, three libraries are included in the benchmark:
 
 ### Parameters
 
+Include "-prof gc" for Memory performance
+
 The benchmarks test both point and polygon intersection and vary
 
 * Number of indexed polygons
 
 ### Results
 
-Benchmark                                      Mode      Score   Error   Units
-GeotoolsBenchmark.pointIntersectsQuery        thrpt     12.849           ops/s
-GeotoolsBenchmark.polygonIntersectsQuery      thrpt      0.073           ops/s
-LuceneBenchmark.pointIntersectsQuery          thrpt      0.073           ops/s
-LuceneBenchmark.polygonIntersectsQuery        thrpt      0.085           ops/s
-MongoDbBenchmark.pointQuery                   thrpt      0.088           ops/s
-MongoDbBenchmark.polygonQuery                 thrpt      0.030           ops/s
-PostgisBenchmark.pointQuery                   thrpt      0.090           ops/s
-PostgisBenchmark.polygonQuery                 thrpt      0.072           ops/s
+On Geofabrik OSM England landuse data, querying with 10,000 random points/polygons.
+
+Benchmark                                  Mode  Cnt   Score    Error  Units
+GeotoolsBenchmark.pointIntersectsQuery    thrpt    3  13.640 ± 83.265  ops/s
+GeotoolsBenchmark.polygonIntersectsQuery  thrpt    3   0.101 ±  0.422  ops/s
+LuceneBenchmark.pointIntersectsQuery      thrpt    3   0.108 ±  0.514  ops/s
+LuceneBenchmark.polygonIntersectsQuery    thrpt    3   0.092 ±  0.117  ops/s
+MongoDbBenchmark.pointQuery               thrpt    3   0.095 ±  0.049  ops/s
+MongoDbBenchmark.polygonQuery             thrpt    3   0.028 ±  0.022  ops/s
+PostgisBenchmark.pointQuery               thrpt    3   0.091 ±  0.142  ops/s
+PostgisBenchmark.polygonQuery             thrpt    3   0.065 ±  0.068  ops/s

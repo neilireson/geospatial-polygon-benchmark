@@ -211,7 +211,7 @@ public class LuceneBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 3)
     public void pointIntersectsQuery() throws IOException {
 
         long candidateCount = 0;
@@ -235,7 +235,7 @@ public class LuceneBenchmark
     @OutputTimeUnit(TimeUnit.SECONDS)
     @Fork(value = 1)
     @Warmup(iterations = 0)
-    @Measurement(iterations = 1)
+    @Measurement(iterations = 3)
     public void polygonIntersectsQuery() throws IOException {
 
         long candidateCount = 0;
