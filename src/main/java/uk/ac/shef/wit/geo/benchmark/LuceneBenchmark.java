@@ -100,6 +100,7 @@ public class LuceneBenchmark
         }
     }
 
+    // NIOFSDirectory seems to be a good choice for larger indexes
     private final LuceneType luceneType = LuceneType.directory;
 
     @Setup
