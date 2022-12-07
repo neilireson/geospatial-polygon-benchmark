@@ -19,10 +19,10 @@ import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.SimpleCollector;
+import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.MMapDirectory;
 import org.apache.lucene.store.NIOFSDirectory;
-import org.apache.lucene.store.RAMDirectory;
 import org.geotools.data.DataStore;
 import org.geotools.data.simple.SimpleFeatureCollection;
 import org.geotools.data.simple.SimpleFeatureIterator;
@@ -87,7 +87,7 @@ public class LuceneBenchmark
                 throws IOException {
             switch (this) {
                 case ram:
-                    return new RAMDirectory();
+                    return new ByteBuffersDirectory();
                 case mmap:
                     //noinspection ConstantConditions
                     return new MMapDirectory(getIndexPath(outputDirectory, indexSource));
@@ -394,7 +394,7 @@ public class LuceneBenchmark
         }
     }
 
-    
+
 
     public static void main(String[] args) {
         try (LuceneBenchmark benchmark = new LuceneBenchmark()) {
