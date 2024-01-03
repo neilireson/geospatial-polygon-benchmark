@@ -1,6 +1,11 @@
 package uk.ac.shef.wit.geo.benchmark;
 
-import org.geotools.data.DataStore;
+import org.geotools.api.data.DataStore;
+import org.geotools.api.feature.simple.SimpleFeature;
+import org.geotools.api.feature.simple.SimpleFeatureType;
+import org.geotools.api.filter.Filter;
+import org.geotools.api.filter.FilterFactory;
+import org.geotools.api.referencing.operation.TransformException;
 import org.geotools.data.collection.SpatialIndexFeatureCollection;
 import org.geotools.data.simple.SimpleFeatureCollection;
 import org.geotools.data.simple.SimpleFeatureIterator;
@@ -13,11 +18,6 @@ import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.operation.distance.DistanceOp;
-import org.opengis.feature.simple.SimpleFeature;
-import org.opengis.feature.simple.SimpleFeatureType;
-import org.opengis.filter.Filter;
-import org.opengis.filter.FilterFactory2;
-import org.opengis.referencing.operation.TransformException;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -54,7 +54,7 @@ public class GeotoolsBenchmark
 
         logger.info("Creating spatial index");
         index = new SpatialIndexFeatureCollection(polygons.getSchema());
-        Function<SimpleFeature,SimpleFeature> simplificationFunction =
+        Function<SimpleFeature, SimpleFeature> simplificationFunction =
                 getSimplificationFunction(polygons);
         if (simplificationFunction == null) {
             index.addAll(polygons);
@@ -154,7 +154,7 @@ public class GeotoolsBenchmark
         super.teardown();
     }
 
-    private static final FilterFactory2 ff = CommonFactoryFinder.getFilterFactory2();
+    private static final FilterFactory ff = CommonFactoryFinder.getFilterFactory();
 
     private SimpleFeatureCollection getIntersectingFeatures(Geometry geometry) {
         SimpleFeatureType schema = index.getSchema();

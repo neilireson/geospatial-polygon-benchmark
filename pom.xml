@@ -22,8 +22,8 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-        <java-source.version>1.8</java-source.version>
-        <java-target.version>1.8</java-target.version>
+        <java-source.version>17</java-source.version>
+        <java-target.version>17</java-target.version>
 
         <!-- Maven plugin version -->
         <maven-antrun-plugin.version>3.0.0</maven-antrun-plugin.version>
@@ -37,17 +37,16 @@
         <maven-source-plugin.version>3.2.1</maven-source-plugin.version>
         <maven-surefire-plugin.version>3.0.0-M5</maven-surefire-plugin.version>
 
-        <geotools.version>29.1</geotools.version>
-        <jmh.version>1.36</jmh.version>
+        <geotools.version>30.1</geotools.version>
+        <jmh.version>1.37</jmh.version>
         <jts.version>1.18.1</jts.version>
-        <lucene.version>9.6.0</lucene.version>
-        <mongodb.version>3.12.13</mongodb.version>
-        <postgis.version>2021.1.0</postgis.version>
-        <postgresql.version>42.2.19</postgresql.version>
-        <progressbar.version>0.9.5</progressbar.version>
-        <slf4j.version>2.0.7</slf4j.version>
+        <lucene.version>9.9.1</lucene.version>
+        <mongodb.version>3.12.14</mongodb.version>
+        <postgis.version>2023.1.0</postgis.version>
+        <progressbar.version>0.10.0</progressbar.version>
+        <slf4j.version>2.0.10</slf4j.version>
         <slf4j.binding>slf4j-jdk14</slf4j.binding>
-        <springframework.version>6.0.9</springframework.version>
+        <springframework.version>6.1.2</springframework.version>
 
         <uberjar.name>benchmarks</uberjar.name>
     </properties>
